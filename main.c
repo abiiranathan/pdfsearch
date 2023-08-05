@@ -3,21 +3,12 @@
 #include <poppler/glib/poppler.h>
 
 #include <pthread.h>
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <wchar.h>
-
 #include <sys/stat.h>
-#include <sys/types.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#define mkdir(dir, mode) _mkdir(dir)
-#endif
+#include <wchar.h>
 
 typedef struct search_args {
   PopplerDocument *doc; // Instance of the poppler document
@@ -70,6 +61,8 @@ void save_page_to_image(PopplerPage *page, int page_num,
   double scale_y = pixel_height / height;
   cairo_scale(cr, scale_x, scale_y);
 
+  // We need a mutex to lock cairo resources
+  pthread_mutex_lock(&cairo_mutex);
   // Render the PDF page to the Cairo surface
   poppler_page_render(page, cr);
 
@@ -101,6 +94,7 @@ void save_page_to_image(PopplerPage *page, int page_num,
   // Free resources used for rendering
   cairo_surface_destroy(surface);
   cairo_destroy(cr);
+  pthread_mutex_unlock(&cairo_mutex);
 }
 
 // Routine to pass to each thread. args is a pointer to search_args.
