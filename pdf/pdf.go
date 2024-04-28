@@ -288,6 +288,7 @@ func (page *Page) Render(output string) {
 	C.render_page_to_image(page.page, C.int(page.Width), C.int(page.Height), c_output)
 }
 
+// Render the page to a PDF file.
 func (page *Page) ToPDF(output string) bool {
 	c_output := C.CString(output)
 	defer C.free(unsafe.Pointer(c_output))
@@ -296,6 +297,7 @@ func (page *Page) ToPDF(output string) bool {
 	return bool(cbool)
 }
 
+// Render a pdf page to a PDF file in a single cgo call.
 func RenderPageToPDF(pageNum int, pdfPath, outPdf string) bool {
 	c_output := C.CString(outPdf)
 	defer C.free(unsafe.Pointer(c_output))
@@ -321,6 +323,7 @@ func RenderPageToImage(pageNum int, pdfPath, outPng string) bool {
 	return bool(cbool)
 }
 
+// Get the text content of the page.
 func (page *Page) Text() string {
 	g_text := C.poppler_page_get_text(page.page)
 	if g_text == nil {
