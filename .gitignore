@@ -1,0 +1,13 @@
+*.so
+*.dll
+*.dylib
+*.exe
+*.a
+*.lib
+*.bin
+*.cache
+
+*.env
+*.pdf
+pdfsearch
+pages

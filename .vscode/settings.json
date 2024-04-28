@@ -1,0 +1,18 @@
+{
+  "clangd.path": "/usr/bin/clangd",
+  "clangd.fallbackFlags": [
+    "-I${workspaceFolder}/**",
+    "-I/usr/include/glib-2.0",
+    "-I/usr/lib/glib-2.0/include",
+    "-I/usr/lib/x86_64-linux-gnu/glib-2.0/include",
+    "-I/usr/include/cairo/",
+    "-I/usr/include/poppler/**",
+    "-I/usr/include/freetype2"
+  ],
+  "clangd.checkUpdates": false,
+  "clangd.serverCompletionRanking": true,
+  "files.associations": {
+    "*.c": "c",
+    "*.h": "c"
+  }
+}

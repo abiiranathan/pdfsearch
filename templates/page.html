@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="The local pdf search engine for books" />
+    <meta name="keywords" content="PDF, Search engine, local, search, books" />
+    <title>PDF Search Engine | {{ .Title }}</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        margin-inline-start: 0;
+        margin-inline-end: 0;
+        margin-block-start: 0;
+        margin-block-end: 0;
+      }
+
+      body {
+        background-color: #f8f8f8;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue",
+          sans-serif;
+        font-size: 1rem;
+        color: #333;
+        overflow: hidden;
+      }
+
+      header {
+        border-bottom: 1px solid #ccc;
+        padding: 1rem;
+        background-color: aliceblue;
+        width: 100%;
+      }
+
+      h1 {
+        font-size: 2rem;
+        font-family: Arial, Helvetica, sans-serif;
+        text-align: center;
+      }
+
+      h2 {
+        font-size: 1.5rem;
+        font-family: Arial, Helvetica, sans-serif;
+        text-align: center;
+      }
+
+      footer {
+        background-color: #ccc;
+        width: 100%;
+        border-top: 1px solid #333;
+        padding: 0.2rem 1rem;
+        position: fixed;
+        bottom: 0;
+        color: #222;
+      }
+
+      .brand {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+
+        a {
+          text-decoration: none;
+          display: inline-block;
+        }
+      }
+
+      .open-document {
+        display: block;
+        text-align: center;
+        padding: 10px;
+        text-overflow: ellipsis;
+        max-width: 50%;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px;
+        gap: 4px;
+      }
+
+      .controls a {
+        padding: 10px;
+        background-color: #117e9f;
+        color: #fff;
+        text-decoration: none;
+        border-radius: 5px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <div class="brand">
+        <a href="/"><h1>PDF Search Engine</h1></a>
+        <a href="/open-document/{{ .ID }}" class="open-document" target="_blank"
+          >{{.Title }}</a
+        >
+      </div>
+    </header>
+    <main class="main">
+      <div class="controls">
+        <a href="{{ .PrevURL }}">Prev Page</a>
+        <a href="{{ .NextURL }}">Next Page</a>
+      </div>
+      <object
+        data="{{ .URL }}#toolbar=0&navpanes=0&scrollbar=0"
+        type="application/pdf"
+        width="100%"
+        height="800"
+      ></object>
+    </main>
+  </body>
+</html>
