@@ -114,3 +114,22 @@ Folder Structure:
 
 
 ```
+
+## USAGE
+
+1. Step 1: Index the PDF files
+```bash
+./pdfsearch build_index -d /path/to/directory/of/pdf/files
+```
+The default index file is `~/index.bin` in the current directory. You can specify a different index file with the `-i` flag.
+
+This command will create an binary index file with the text extracted from the PDF files in the specified directory.
+
+2. Run the web server
+```bash
+./pdfsearch runserver -p 8080 -i /path/to/index.bin
+```
+
+This command will start a web server on port 8080. You can specify a different port with the `-p` flag. You can specify a different index file with the `-i` flag.
+
+3. Open the web browser and go to `http://localhost:8080` to search for keywords in the PDF files.
