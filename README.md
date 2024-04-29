@@ -6,20 +6,27 @@ This is an experimental PDF search engine. The project is written go and uses th
 I am a medical doctor and I have a lot of PDF files with notes, books, and articles. I wanted to have a simple search engine to search for keywords in these files. I also wanted to learn more about the go programming language's CGO capabilities.
 
 ## Installation
-You need to have the poppler-glib and cairo libraries installed on your system. On Ubuntu, you can install them with the following command:
 
+> You can download the latest release for Linux from the following link:
+[Github pdfsearch Releases](https://github.com/abiiranathan/pdfsearch/releases)
+
+### Build from source  
+Download the required libraries.
+
+You need to have the poppler-glib and cairo libraries installed on your system. 
+
+> On Ubuntu/debain, you can install them with the following command:
 ```bash
 sudo apt-get install libpoppler-glib-dev libcairo2-dev pkg-config
 ```
 
-If that does not work, you can try the following command:
+If that does not work, you can try the following command to install all the required libraries:
 ```bash
 sudo apt-get install build-essential cmake pkg-config\
  libpoppler-glib-dev glib2.0 glib2.0-dev libfontconfig1-dev \
  libfreetype6-dev libjpeg-dev libpng-dev libtiff-dev \
  libopenjp2-7-dev libcurl4-gnutls-dev libgtest-dev libboost-dev
 ```
-
 
 On Arch Linux, you can install them with the following command:
 
@@ -114,6 +121,7 @@ Folder Structure:
 
 
 ```
+We have not tested the Windows build. If you have any issues, please let us know.
 
 ## USAGE
 
