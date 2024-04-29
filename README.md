@@ -129,13 +129,16 @@ We have not tested the Windows build. If you have any issues, please let us know
 ```bash
 ./pdfsearch build_index -d /path/to/directory/of/pdf/files
 ```
-The default index file is `~/index.bin` in the current directory. You can specify a different index file with the `-i` flag.
+The default index file is `~/index.bin` in your home directory. You can specify a different index file with the `-i` flag or --index flag. We advise you to use the default index file.
 
 This command will create an binary index file with the text extracted from the PDF files in the specified directory.
 
-2. Run the web server
+1. Run the web server
 ```bash
-./pdfsearch runserver -p 8080 -i /path/to/index.bin
+./pdfsearch runserver -p 8080
+
+# Or specify the index file
+./pdfsearch runserver -p 8080 -i ~/index.bin
 ```
 
 This command will start a web server on port 8080. You can specify a different port with the `-p` flag. You can specify a different index file with the `-i` flag.
