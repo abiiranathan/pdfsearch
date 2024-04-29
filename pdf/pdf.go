@@ -378,19 +378,32 @@ func GetPageMatches(pageText string, pattern string, pdfPath string, pageNum int
 	for i, line := range lines {
 		lowerline := strings.ToLower(line)
 
-		for _, qw := range queryWords {
-			if strings.Contains(lowerline, qw) && !slices.ContainsFunc(matches, func(m Match) bool {
+		alreadyExists := func(line string) bool {
+			return slices.ContainsFunc(matches, func(m Match) bool {
 				return m.Text == line
-			}) {
-				matches = append(matches, Match{
-					ID:       GetPathHash(pdfPath),
-					PageNum:  pageNum,
-					Filename: pdfPath,
-					BaseName: filepath.Base(pdfPath),
-					Text:     line,
-					Context:  GetLineContext(i, &lines),
-				})
+			})
+		}
+
+		lineScore := 0.0
+		hasMatch := false
+
+		for _, qw := range queryWords {
+			if strings.Contains(lowerline, qw) {
+				lineScore += 1.0
+				hasMatch = true
 			}
+		}
+
+		if hasMatch && !alreadyExists(line) {
+			matches = append(matches, Match{
+				ID:       GetPathHash(pdfPath),
+				PageNum:  pageNum,
+				Filename: pdfPath,
+				BaseName: filepath.Base(pdfPath),
+				Text:     line,
+				Context:  GetLineContext(i, &lines),
+				Score:    float32(lineScore),
+			})
 		}
 
 	}
@@ -399,7 +412,7 @@ func GetPageMatches(pageText string, pattern string, pdfPath string, pageNum int
 
 func GetLineContext(lineno int, lines *[]string) string {
 	size := len(*lines)
-	contextSize := 10
+	contextSize := 5
 	var start, end int
 
 	if lineno < contextSize {
@@ -409,7 +422,20 @@ func GetLineContext(lineno int, lines *[]string) string {
 		start = lineno - contextSize
 		end = min((lineno+contextSize)-1, size-1)
 	}
-	return strings.Join((*lines)[start:end], " ")
+	text := strings.Join((*lines)[start:end], " ")
+
+	// trim start until the first space Capital letter
+	for i := 0; i < len(text); i++ {
+		if text[i] == ' ' {
+			continue
+		}
+
+		if text[i] >= 'A' && text[i] <= 'Z' {
+			text = text[i:]
+			break
+		}
+	}
+	return text
 }
 
 var mu sync.Mutex

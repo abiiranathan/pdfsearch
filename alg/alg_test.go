@@ -1,6 +1,7 @@
 package alg
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/jdkato/prose/v2"
@@ -20,7 +21,7 @@ func TestMatchQuery(t *testing.T) {
 			name: "MatchQuery",
 			args: args{
 				pageText: "This is a test",
-				query:    "This is a test",
+				query:    "This test",
 			},
 			want: true,
 		},
@@ -62,7 +63,7 @@ func BenchmarkCosineSimilarity(b *testing.B) {
 		"test": 1.0,
 	}
 	for i := 0; i < b.N; i++ {
-		CalculateCosineSimilarity(tfidf1, tfidf2)
+		CosineSimilarity(tfidf1, tfidf2)
 	}
 }
 
@@ -73,5 +74,25 @@ func BenchmarkCalculateTFIDF(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		CalculateTFIDF(doc)
+	}
+}
+
+func TestCalculateTFDF(t *testing.T) {
+	text := "The cause of Malaria is a parasite called Plasmodium, which is transmitted via the bites of infected mosquitoes."
+	doc, _ := prose.NewDocument(text)
+
+	for _, token := range doc.Tokens() {
+		fmt.Println(token.Text)
+	}
+
+	pattern := "Plasmodium falciparum is a parasite bites transmitted malaria"
+
+	tfidf := CalculateTFIDF(doc)
+	queryDoc, _ := prose.NewDocument(pattern)
+
+	queryTFIDF := CalculateTFIDF(queryDoc)
+
+	if CosineSimilarity(tfidf, queryTFIDF) < 0.5 {
+		t.Errorf("CosineSimilarity() = %v, want %v", CosineSimilarity(tfidf, queryTFIDF), 0.5)
 	}
 }

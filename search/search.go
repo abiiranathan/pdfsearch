@@ -163,8 +163,8 @@ type mapValue struct {
 }
 
 func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) (pdf.Matches, error) {
-	matches := make(pdf.Matches, 0, 500)
-	numWorkers := 4
+	matches := make(pdf.Matches, 0, 25)
+	const numWorkers int = 10
 
 	jobs := make(chan mapValue, len(*searchIndex))
 	results := make(chan pdf.Match, len(*searchIndex))
@@ -174,7 +174,7 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 	originalPattern := pattern
 
 	// create a pattern document
-	patternDoc, err := prose.NewDocument(pattern)
+	patternDoc, err := prose.NewDocument(pattern, prose.WithExtraction(false))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pattern document: %v", err)
 	}
@@ -232,6 +232,7 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 							break
 						}
 					}
+
 					if !continueSearch {
 						continue
 					}
@@ -251,12 +252,17 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 
 					hasExactMatch := strings.Contains(strings.ToLower(line), originalPattern)
 					lvd := stopwords.LevenshteinDistance([]byte(strings.ToLower(line)), []byte(pattern), "en", false)
+					lvdFloat := float32(lvd)
+
 					if hasExactMatch || lvd < threshold {
 						if hasExactMatch {
-							lvd = 0.0 // Lower the score for exact matches
+							// The exact match is given a higher score (smaller distance)
+							lvdFloat = float32(len(originalPattern)+len(line)) / 100
 						}
 
 						snippet := pdf.GetLineContext(i, &lines)
+
+						// Create a new match
 						results <- pdf.Match{
 							ID:       pdf.GetPathHash(kv.index.Filename),
 							Filename: kv.index.Filename,
@@ -264,9 +270,8 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 							PageNum:  kv.index.Page,
 							Text:     line,
 							Context:  snippet,
-							Score:    float32(lvd),
+							Score:    lvdFloat,
 						}
-
 					}
 				}
 			}
@@ -307,27 +312,27 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 		matches = append(matches, match)
 	}
 
-	// Remove duplicates
-	deduped := make(map[string]pdf.Match)
+	// Remove duplicates but keep the order
+	deduped := make(pdf.Matches, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
 	for _, match := range matches {
-		key := fmt.Sprintf("%d:%s:%d", match.PageNum, match.Text, match.ID)
-		if _, ok := deduped[key]; !ok {
-			deduped[key] = match
+		if _, ok := seen[match.Text]; !ok {
+			seen[match.Text] = struct{}{}
+			deduped = append(deduped, match)
 		}
 	}
 
-	matches = make(pdf.Matches, 0, len(deduped))
-	for _, match := range deduped {
-		matches = append(matches, match)
-	}
-
 	// Sort matches by score least LV distance
-	slices.SortStableFunc(matches, func(a, b pdf.Match) int {
+	slices.SortStableFunc(deduped, func(a, b pdf.Match) int {
 		return cmp.Compare(a.Score, b.Score)
 	})
 
-	// Clip and return matches
-	return slices.Clip(matches), nil
+	// Clip the matches to a maximum of 200
+	const maxMatches = 200
+	if len(deduped) > maxMatches {
+		deduped = deduped[:maxMatches]
+	}
+	return deduped, nil
 }
 
 type IndexKey struct {

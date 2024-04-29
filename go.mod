@@ -1,6 +1,6 @@
 module github.com/abiiranathan/pdfsearch
 
-go 1.22.2
+go 1.22
 
 require (
 	github.com/abiiranathan/goflag v0.1.6
