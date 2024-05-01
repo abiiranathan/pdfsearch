@@ -1,203 +1,17 @@
 package pdf
 
 /*
+#cgo CFLAGS: -I .
+
+#ifdef _WIN32
+// TODO: Add windows support
+error "Windows is not supported yet"
+#else
 #cgo pkg-config: glib-2.0 gio-2.0 cairo poppler-glib
-#cgo LDFLAGS: -pthread
+#cgo LDFLAGS: -lglib-2.0 -lgobject-2.0 -lgio-2.0 -lcairo -lpoppler-glib
+#endif
 
-#include <cairo/cairo.h>
-#include <cairo/cairo-pdf.h>
-#include <locale.h>
-#include <poppler/glib/poppler.h>
-#include <stdio.h>
-#include <stdbool.h>
-
-static pthread_mutex_t cairo_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-PopplerDocument *open_document(const char *filename, int *num_pages){
-	GFile* file = g_file_new_for_path(filename);
-	if(file == NULL){
-		return NULL;
-	}
-
-	GError* error = NULL;
-	GBytes* bytes = g_file_load_bytes(file, NULL, NULL, &error);
-	g_object_unref(file);
-
-	if (error != NULL) {
-		g_print("Error loading PDF file: %s\n", error->message);
-		g_clear_error(&error);
-		return NULL;
-	}
-
-	PopplerDocument *doc = poppler_document_new_from_bytes(bytes, NULL, &error);
-	if (error) {
-		g_print("Error creating PDF document: %s\n", error->message);
-		g_clear_error(&error);
-		g_bytes_unref(bytes);
-		return NULL;
-	}
-
-	*num_pages = poppler_document_get_n_pages(doc);
-	g_bytes_unref(bytes);
-	return doc;
-}
-
-void render_page_to_image(PopplerPage *page, int width, int height, const char* output_file) {
-  // Set the desired resolution (300 DPI)
-  double resolution = 300.0;
-  int pixel_width = (int)(width * resolution / 72.0);
-  int pixel_height = (int)(height * resolution / 72.0);
-
-  // Lock the mutex before creating the Cairo surface
-  pthread_mutex_lock(&cairo_mutex);
-
-  // Create the Cairo surface with the specified resolution
-  cairo_surface_t* surface =
-    cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pixel_width, pixel_height);
-  if (surface == NULL) {
-    pthread_mutex_unlock(&cairo_mutex);
-    puts("Unable to create cairo surface");
-    return;
-  }
-
-  cairo_t* cr = cairo_create(surface);
-  if (cr == NULL) {
-    pthread_mutex_unlock(&cairo_mutex);
-    puts("Error: could not create cairo context");
-    return;
-  }
-
-  // Set the background color to white (or any desired color)
-  cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);  // White background
-  cairo_paint(cr);                          // Fill the surface with the background color
-
-  // Disable anti-aliasing for text rendering to avoid blurriness.
-  cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
-
-  // Calculate the scaling factors to maintain the original aspect ratio
-  double scale_x = pixel_width / width;
-  double scale_y = pixel_height / height;
-  cairo_scale(cr, scale_x, scale_y);
-
-  poppler_page_render(page, cr);
-
-  // Unlock the mutex after rendering the page
-  pthread_mutex_unlock(&cairo_mutex);
-
-  cairo_status_t status = cairo_surface_write_to_png(surface, output_file);
-  if (status != CAIRO_STATUS_SUCCESS) {
-    puts("Error: could not write to png file");
-    return;
-  }
-
-  cairo_surface_destroy(surface);
-  cairo_destroy(cr);
-}
-
-// Render a single page from a document. Avoids multiple cgo calls
-bool render_page_from_document(const char *pdf_path, int page_num, const char* output_png){
-	int num_pages=0;
-	PopplerDocument *doc = open_document(pdf_path, &num_pages);
-	if(doc == NULL){
-		puts("Error opening document");
-		return false;
-	}
-
-	if (page_num < 0 || page_num >= num_pages){
-		puts("Page number is out of range of this document");
-		g_object_unref(doc);
-		return false;
-	}
-
-	PopplerPage *page = poppler_document_get_page(doc, page_num);
-	if(page == NULL){
-		printf("PopplerPage for page %d is NULL\n", page_num);
-		g_object_unref(doc);
-		return false;
-	}
-
-	double width, height;
-	poppler_page_get_size(page, &width, &height);
-
-	render_page_to_image(page, width, height, output_png);
-	g_object_unref(doc);
-	g_object_unref(page);
-	return true;
-}
-
-// Render a pdf of a Poppler Page with cairo
-bool poppler_page_to_pdf(PopplerPage *page,  const char* output_pdf){
-	cairo_surface_t *surface;
-	cairo_t *cr;
-
-	double width, height;
-	poppler_page_get_size(page, &width, &height);
-
-	double resolution = 300.0;
-	int pixel_width = (int)(width * resolution / 72.0);
-	int pixel_height = (int)(height * resolution / 72.0);
-
-	pthread_mutex_lock(&cairo_mutex);
-
-	surface = cairo_pdf_surface_create(output_pdf, pixel_width, pixel_height);
-	if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
-		puts("Error creating PDF surface");
-		pthread_mutex_unlock(&cairo_mutex);
-		return false;
-	}
-
-	cr = cairo_create(surface);
-	if (cairo_status(cr) != CAIRO_STATUS_SUCCESS) {
-		puts("Error creating cairo context");
-		pthread_mutex_unlock(&cairo_mutex);
-		return false;
-	}
-
-	// Set the background color (optional)
-    cairo_set_source_rgb(cr, 1, 1, 1);
-    cairo_paint(cr);
-
-	cairo_scale(cr, pixel_width / width, pixel_height / height);
-
-	poppler_page_render(page, cr);
-
-	cairo_surface_finish(surface);
-
-	cairo_destroy(cr);
-	cairo_surface_destroy(surface);
-	pthread_mutex_unlock(&cairo_mutex);
-
-	return true;
-}
-
-
-// Takes in the page num, pdf path, outpdf path and renders the page to a pdf
-bool render_page_to_pdf(const char *pdf_path, int page_num, const char* output_pdf){
-	int num_pages=0;
-	PopplerDocument *doc = open_document(pdf_path, &num_pages);
-	if(doc == NULL){
-		puts("Error opening document");
-		return false;
-	}
-
-	if (page_num < 0 || page_num >= num_pages){
-		puts("Page number is out of range of this document");
-		g_object_unref(doc);
-		return false;
-	}
-
-	PopplerPage *page = poppler_document_get_page(doc, page_num);
-	if(page == NULL){
-		printf("PopplerPage for page %d is NULL\n", page_num);
-		g_object_unref(doc);
-		return false;
-	}
-
-	bool status = poppler_page_to_pdf(page, output_pdf);
-	g_object_unref(doc);
-	g_object_unref(page);
-	return status;
-}
+#include "pdf.h"
 
 */
 import "C"
@@ -208,6 +22,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -332,7 +147,14 @@ func (page *Page) Text() string {
 	defer C.g_free(C.gpointer(g_text))
 
 	// skip all arrows
-	skipToken := []rune{0x25B6, 0x25B8, 0x25B7, 0x25B9, 0x25BA, 0x25BB, 0x25C0, 0x25C2, 0x25C1, 0x25C3, 0x25C4, 0x25C5, 0x25C6, 0x25C7, 0x25C8, 0x25C9, 0x25CA, 0x25CB, 0x25CC, 0x25CD, 0x25CE, 0x25CF, 0x25D0, 0x25D1, 0x25D2, 0x25D3, 0x25D4, 0x25D5, 0x25D6, 0x25D7, 0x25D8, 0x25D9, 0x25DA, 0x25DB, 0x25DC, 0x25DD, 0x25DE, 0x25DF, 0x25E0, 0x25E1, 0x25E2, 0x25E3, 0x25E4, 0x25E5, 0x25E6, 0x25E7, 0x25E8, 0x25E9, 0x25EA, 0x25EB, 0x25EC, 0x25ED, 0x25EE, 0x25EF, 0x25F0, 0x25F1, 0x25F2, 0x25F3, 0x25F4, 0x25F5, 0x25F6, 0x25F7, 0x25F8, 0x25F9, 0x25FA, 0x25FB, 0x25FC, 0x25FD, 0x25FE, 0x25FF, 0x0080}
+	skipToken := []rune{0x25B6, 0x25B8, 0x25B7, 0x25B9, 0x25BA, 0x25BB, 0x25C0, 0x25C2,
+		0x25C1, 0x25C3, 0x25C4, 0x25C5, 0x25C6, 0x25C7, 0x25C8, 0x25C9, 0x25CA, 0x25CB,
+		0x25CC, 0x25CD, 0x25CE, 0x25CF, 0x25D0, 0x25D1, 0x25D2, 0x25D3, 0x25D4, 0x25D5,
+		0x25D6, 0x25D7, 0x25D8, 0x25D9, 0x25DA, 0x25DB, 0x25DC, 0x25DD, 0x25DE, 0x25DF,
+		0x25E0, 0x25E1, 0x25E2, 0x25E3, 0x25E4, 0x25E5, 0x25E6, 0x25E7, 0x25E8, 0x25E9,
+		0x25EA, 0x25EB, 0x25EC, 0x25ED, 0x25EE, 0x25EF, 0x25F0, 0x25F1, 0x25F2, 0x25F3,
+		0x25F4, 0x25F5, 0x25F6, 0x25F7, 0x25F8, 0x25F9, 0x25FA, 0x25FB, 0x25FC, 0x25FD,
+		0x25FE, 0x25FF, 0x0080}
 
 	text := C.GoString((*C.char)(g_text))
 	text = strings.ReplaceAll(text, "\u0089", "")
@@ -340,6 +162,40 @@ func (page *Page) Text() string {
 		text = strings.ReplaceAll(text, string(token), "")
 	}
 	return text
+}
+
+// Read the text content of a PDF file in a single cgo call in parallel.
+// Returns a slice of strings, each representing page content.
+// The number of threads can be specified, otherwise it defaults to the number of CPUs.
+func ReadPDFText(pdfPath string, numThreads ...int) []string {
+	var c_path *C.char = C.CString(pdfPath)
+	defer C.free(unsafe.Pointer(c_path))
+
+	var numPages C.int
+	nthreads := runtime.NumCPU()
+	if len(numThreads) > 0 {
+		nthreads = numThreads[0]
+	}
+
+	pageTextArr := C.read_pdf_text(c_path, &numPages, C.int(nthreads))
+	defer C.free_pdf_text(pageTextArr, numPages)
+
+	// goPageTextSlice := make([]*C.char, numPages)
+	// for i := range goPageTextSlice {
+	// 	goPageTextSlice[i] = (*C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(pageTextArr)) + uintptr(i)*unsafe.Sizeof(*pageTextArr)))
+	// }
+
+	// Convert the C array to a Go slice
+	goPageTextSlice := (*[1 << 30]*C.char)(unsafe.Pointer(pageTextArr))[:numPages:numPages]
+	return pagesToStrings(goPageTextSlice, int(numPages))
+}
+
+func pagesToStrings(pages []*C.char, numPages int) []string {
+	texts := make([]string, numPages)
+	for i, page := range pages {
+		texts[i] = C.GoString(page)
+	}
+	return texts
 }
 
 type Match struct {
