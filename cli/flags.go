@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,26 +13,7 @@ import (
 	"github.com/abiiranathan/pdfsearch/search"
 )
 
-func printMatches(matches *pdf.Matches) {
-	for _, match := range *matches {
-		fmt.Printf("%s Page: %d : %s\n", match.Filename, match.PageNum, match.Context)
-	}
-}
-
-func ValidateIndex(index string) {
-	stat, err := os.Stat(index)
-	if err != nil {
-		log.Fatalln("The file you specified for the index does not exist")
-	}
-
-	if stat.Size() == 0 {
-		log.Fatalf("The file you specified for the index is empty. Run the `build_index` command to generate an index\n")
-	}
-	log.Printf("Using index: %s [%d bytes]\n", index, stat.Size())
-}
-
 func DefineFlags(config *Config, runserver func()) *goflag.Context {
-	// Use the home folder/index.bin as default index.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("os.UserHomeDir() unable failed: %v\n", err)
@@ -42,7 +22,6 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 	// Create the index file if it does not exist.
 	config.Index = filepath.Join(home, "index.bin")
 	if _, err := os.Stat(config.Index); err != nil {
-		// if the file does not exist, create it.
 		if errors.Is(err, fs.ErrNotExist) {
 			_, err = os.Create(config.Index)
 			if err != nil {
@@ -57,18 +36,8 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 		Name:      "index",
 		ShortName: "i",
 		Value:     &config.Index,
-		Usage:     "The path to write the generated binary index",
+		Usage:     "The path to the generated binary index or where to write it to",
 		Required:  false,
-		Validator: nil,
-	}
-
-	patternFlag := goflag.Flag{
-		FlagType:  goflag.FlagString,
-		Name:      "pattern",
-		ShortName: "p",
-		Value:     &config.Pattern,
-		Usage:     "The search term or regex pattern",
-		Required:  true,
 		Validator: nil,
 	}
 
@@ -76,38 +45,30 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 	ctx := goflag.NewContext()
 
 	// global flags
-	ctx.AddFlag(goflag.FlagInt, "concurrency", "c",
-		&config.MaxConcurrency,
-		"No of concurrent files or folders to be processed at once",
-		false, goflag.Min(1), goflag.Max(100))
+	concurrencyValidators := []func(any) (bool, string){goflag.Min(1), goflag.Max(100)}
+	ctx.AddFlag(goflag.FlagInt, "concurrency", "c", &config.MaxConcurrency,
+		"No of concurrent processes", false, concurrencyValidators...)
 
-	// register subcommands
-	ctx.AddSubCommand("build_index", "Build a file index for a specified folder", func() {
-		search.Serialize(config.Directory, config.Index, config.MaxConcurrency)
-	}).AddFlag(goflag.FlagDirPath, "directory", "d", &config.Directory, "The directory to index", true).
-		AddFlagPtr(&indexFlag)
+	// build_index subcommand
+	buildCmd := ctx.AddSubCommand("build_index", "Build a file index for a specified folder", buildHandler(config))
+	buildCmd.AddFlag(goflag.FlagDirPath, "directory", "d", &config.Directory, "The directory to index", true)
+	buildCmd.AddFlagPtr(&indexFlag)
 
-	ctx.AddSubCommand("search_file", "Search a single PDF file", func() {
-		matches, err := search.SearchFile(context.Background(),
-			config.Filename, config.Pattern, config.MaxConcurrency)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		printMatches(&matches)
-	}).AddFlag(goflag.FlagFilePath, "file", "f", &config.Filename, "The PDF file to search", true).
-		AddFlagPtr(&patternFlag)
+	// Search subcommand
+	searchCmd := ctx.AddSubCommand("search", "Search the generated index and print matches", searchHandler(config))
+	searchCmd.AddFlagPtr(&indexFlag)
+	searchCmd.AddFlag(goflag.FlagString, "pattern", "p", &config.Pattern, "The search query", true)
 
-	ctx.AddSubCommand("search_dir", "Search directory of PDF files recursively", func() {
-		matches, err := search.SearchDirectory(context.Background(),
-			config.Directory, config.Pattern, config.MaxConcurrency)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		printMatches(&matches)
-	}).AddFlag(goflag.FlagDirPath, "directory", "d", &config.Directory, "The directory to search", true).
-		AddFlagPtr(&patternFlag)
+	// Server subcommand
+	srv := ctx.AddSubCommand("serve", "Start an Http server for search", runserver)
+	srv.AddFlag(goflag.FlagInt, "port", "p", &config.Port, "The port to run the server on", false)
+	srv.AddFlagPtr(&indexFlag)
 
-	ctx.AddSubCommand("search", "Search faster from a generated index", func() {
+	return ctx
+}
+
+func searchHandler(config *Config) func() {
+	return func() {
 		ValidateIndex(config.Index)
 
 		searchIndex, err := search.Deserialize(config.Index)
@@ -115,18 +76,34 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 			panic(fmt.Errorf("unable to deserialize: %s", config.Index))
 		}
 
-		matches, err := search.SearchFromIndex(config.Pattern, searchIndex)
+		matches, err := search.Search(config.Pattern, searchIndex)
 		if err != nil {
 			log.Fatalln(err)
 		}
 		printMatches(&matches)
+	}
+}
 
-	}).AddFlagPtr(&indexFlag).AddFlagPtr(&patternFlag)
+func buildHandler(config *Config) func() {
+	return func() {
+		search.Serialize(config.Directory, config.Index, config.MaxConcurrency)
+	}
+}
 
-	// Run server
-	ctx.AddSubCommand("runserver", "Start an Http server for search", runserver).
-		AddFlag(goflag.FlagInt, "port", "p", &config.Port, "The port to run the server on", false).
-		AddFlagPtr(&indexFlag)
+func printMatches(matches *pdf.Matches) {
+	for _, match := range *matches {
+		fmt.Printf("%s Page: %d : %s\n", match.Filename, match.PageNum, match.Text)
+	}
+}
 
-	return ctx
+func ValidateIndex(index string) {
+	stat, err := os.Stat(index)
+	if err != nil {
+		log.Fatalln("The file you specified for the index does not exist")
+	}
+
+	if stat.Size() == 0 {
+		log.Fatalf("The file you specified for the index is empty. Run the `build_index` command to generate an index\n")
+	}
+	log.Printf("Using index: %s [%d bytes]\n", index, stat.Size())
 }
