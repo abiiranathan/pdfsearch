@@ -284,3 +284,54 @@ void free_pdf_text(char** text, int num_pages) {
     }
     g_free(text);
 }
+
+struct OpenDocumentArgs {
+    const char* filename;
+    PopplerDocument* doc;
+    int* num_pages;
+};
+
+void* async_open_document(struct OpenDocumentArgs* args) {
+    PopplerDocument* doc = open_document(args->filename, args->num_pages);
+    return doc;
+}
+
+// Open multiple documents simultaneously
+bool open_documents(MDocument* md, const char** filenames, size_t num_files) {
+    GThread* threads[num_files];
+    memset(md, 0, num_files * sizeof(MDocument));
+
+    for (size_t i = 0; i < num_files; i++) {
+        struct OpenDocumentArgs* args = g_new(struct OpenDocumentArgs, 1);
+        args->filename = filenames[i];
+        args->num_pages = &md[i].num_pages;
+        threads[i] = g_thread_new(NULL, (GThreadFunc)async_open_document, (gpointer)args);
+    }
+
+    for (size_t i = 0; i < num_files; i++) {
+        PopplerDocument* doc = g_thread_join(threads[i]);
+        if (doc == NULL) {
+            // free the documents that have been opened so far
+            for (size_t j = 0; j < i; j++) {
+                g_object_unref(md[j].document);
+            }
+            return false;
+        }
+        md[i].document = doc;
+    }
+    return true;
+}
+
+void free_documents(MDocument** md, size_t num_files, bool free_array) {
+    if (md == NULL)
+        return;
+
+    for (size_t i = 0; i < num_files; i++) {
+        g_object_unref(md[i]->document);
+    }
+
+    if (free_array) {
+        free(md);
+        md = NULL;
+    }
+}

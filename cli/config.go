@@ -24,6 +24,5 @@ type Config struct {
 }
 
 var DefaultConfig = Config{
-	MaxConcurrency: 10,
-	Port:           8080,
+	Port: 8080,
 }

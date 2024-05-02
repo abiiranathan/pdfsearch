@@ -39,7 +39,11 @@ func Home(tmpl *template.Template, searchIndex *search.SearchIndex) http.Handler
 
 	books := make([]Book, 0, len(availableBooks))
 	for _, book := range availableBooks {
-		books = append(books, book)
+		if !slices.ContainsFunc(books, func(b Book) bool {
+			return filepath.Base(book.Name) == filepath.Base(b.Name)
+		}) {
+			books = append(books, book)
+		}
 	}
 
 	slices.SortStableFunc(books, func(a, b Book) int {
@@ -78,7 +82,7 @@ func Search(searchIndex *search.SearchIndex) http.HandlerFunc {
 		}
 
 		if query != "" {
-			matches, err := search.SearchFromIndex(query, searchIndex, bookId...)
+			matches, err := search.Search(query, searchIndex, bookId...)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				json.NewEncoder(w).Encode(map[string]string{
@@ -90,10 +94,8 @@ func Search(searchIndex *search.SearchIndex) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "max-age=31536000")
-
 			json.NewEncoder(w).Encode(matches)
 		} else {
-			// Send an empty slice.
 			json.NewEncoder(w).Encode([]string{})
 
 		}
@@ -136,7 +138,9 @@ func ServerPage(tmpl *template.Template, pagesDir string) http.HandlerFunc {
 			return
 		}
 
-		// w.Header().Set("Cache-Control", "max-age=31536000")
+		w.Header().Set("Cache-Control", "max-age=31536000")
+		w.Header().Set("Content-Type", "text/html")
+
 		tmpl.ExecuteTemplate(w, "page.html", map[string]any{
 			"Title":   filepath.Base(path),
 			"URL":     fmt.Sprintf("/%s", tempfile.Name()),
@@ -166,30 +170,25 @@ func OpenDocument(pagesDir string) http.HandlerFunc {
 		// Open the document with xdg-open if on localhost
 		host := strings.Split(r.Host, ":")[0]
 		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-			var command string
-			switch runtime.GOOS {
-			case "windows":
-				command = "cmd"
-			case "darwin":
-				command = "open"
-			case "linux":
-				command = "xdg-open"
-			default:
-				log.Fatalln("unsupported platform")
+			var cmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				cmd = exec.Command("cmd", "/c", "start", path)
+			} else if runtime.GOOS == "darwin" {
+				cmd = exec.Command("open", path)
+			} else {
+				cmd = exec.Command("xdg-open", path)
 			}
 
-			cmd := exec.Command(command, path)
-			err = cmd.Run()
+			err := cmd.Run()
 			if err != nil {
-				http.Error(w, "Unable to open document with xdg-open", http.StatusInternalServerError)
-
-				// cache the file
+				log.Printf("unable to open %s with default application. Serving it instead\n", path)
 				w.Header().Set("Cache-Control", "max-age=31536000")
 				http.ServeFile(w, r, path)
 				return
 			}
 
-			http.Redirect(w, r, r.Referer(), http.StatusFound)
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintln(w, "<h1>Opening PDF with default application</h1>")
 		} else {
 			http.ServeFile(w, r, path)
 		}

@@ -37,6 +37,14 @@ type Document struct {
 	NumPages int
 }
 
+type MultiDocument struct {
+	Data []Document
+
+	// The array is storing PopplerDocments, so we keep a reference
+	// so we can free it on Close.
+	array *C.struct_MDocument
+}
+
 func SetLocale() {
 	// Set locale to UTF-8
 	C.setlocale(C.LC_ALL, C.CString(""))
@@ -53,6 +61,66 @@ func Open(path string) *Document {
 		Path:     path,
 	}
 	return pdf
+}
+
+func OpenDocuments(pdfPaths ...string) (*MultiDocument, error) {
+	if len(pdfPaths) == 0 {
+		return nil, fmt.Errorf("no pdf paths provided")
+	}
+
+	cPaths := make([]*C.char, len(pdfPaths))
+	for i, path := range pdfPaths {
+		cPaths[i] = C.CString(path)
+	}
+
+	defer func() {
+		for i := range cPaths {
+			C.free(unsafe.Pointer(cPaths[i]))
+		}
+	}()
+
+	// create MDocument array
+	mdocs := C.calloc(C.size_t(len(pdfPaths)), C.sizeof_MDocument)
+	if mdocs == nil {
+		return nil, fmt.Errorf("unable to allocate memory")
+	}
+
+	ok := C.open_documents((*C.struct_MDocument)(mdocs), &cPaths[0], C.size_t(len(pdfPaths)))
+	if !ok {
+		return nil, fmt.Errorf("unable to open documents")
+	}
+
+	multiData := make([]Document, len(pdfPaths))
+
+	for i := 0; i < len(pdfPaths); i++ {
+		// get the pointer to the i-th MDocument with pointer arithmetic, phew!
+		mdoc := (*C.MDocument)(unsafe.Pointer(uintptr(mdocs) + uintptr(i)*C.sizeof_MDocument))
+		multiData[i] = Document{
+			doc:      mdoc.document,
+			Path:     pdfPaths[i],
+			NumPages: int(mdoc.num_pages),
+		}
+	}
+
+	multiDoc := &MultiDocument{
+		Data:  multiData,
+		array: (*C.struct_MDocument)(mdocs),
+	}
+	return multiDoc, nil
+}
+
+func (mdoc *MultiDocument) Close() {
+	if mdoc == nil {
+		return
+	}
+
+	// free Poppler documents in the array
+	for i := 0; i < len(mdoc.Data); i++ {
+		C.g_object_unref(C.gpointer(mdoc.Data[i].doc))
+	}
+
+	// Free the array itself.
+	C.free(unsafe.Pointer(mdoc.array))
 }
 
 func (pdf *Document) Close() {
@@ -140,6 +208,10 @@ func RenderPageToImage(pageNum int, pdfPath, outPng string) bool {
 
 // Get the text content of the page.
 func (page *Page) Text() string {
+	if page == nil || page.page == nil {
+		return ""
+	}
+
 	g_text := C.poppler_page_get_text(page.page)
 	if g_text == nil {
 		return ""
@@ -161,12 +233,11 @@ func (page *Page) Text() string {
 	for _, token := range skipToken {
 		text = strings.ReplaceAll(text, string(token), "")
 	}
-	return text
+	return C.GoString(g_text)
 }
 
 // Read the text content of a PDF file in a single cgo call in parallel.
-// Returns a slice of strings, each representing page content.
-// The number of threads can be specified, otherwise it defaults to the number of CPUs.
+// This is fast but consumes a lot of memory.
 func ReadPDFText(pdfPath string, numThreads ...int) []string {
 	var c_path *C.char = C.CString(pdfPath)
 	defer C.free(unsafe.Pointer(c_path))
@@ -179,11 +250,6 @@ func ReadPDFText(pdfPath string, numThreads ...int) []string {
 
 	pageTextArr := C.read_pdf_text(c_path, &numPages, C.int(nthreads))
 	defer C.free_pdf_text(pageTextArr, numPages)
-
-	// goPageTextSlice := make([]*C.char, numPages)
-	// for i := range goPageTextSlice {
-	// 	goPageTextSlice[i] = (*C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(pageTextArr)) + uintptr(i)*unsafe.Sizeof(*pageTextArr)))
-	// }
 
 	// Convert the C array to a Go slice
 	goPageTextSlice := (*[1 << 30]*C.char)(unsafe.Pointer(pageTextArr))[:numPages:numPages]
@@ -268,7 +334,7 @@ func GetPageMatches(pageText string, pattern string, pdfPath string, pageNum int
 
 func GetLineContext(lineno int, lines *[]string) string {
 	size := len(*lines)
-	contextSize := 5
+	contextSize := 10
 	var start, end int
 
 	if lineno < contextSize {

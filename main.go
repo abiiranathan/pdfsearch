@@ -28,6 +28,9 @@ func startServer() {
 }
 
 func main() {
+	log.SetPrefix("[pdfsearch]: ")
+	log.SetFlags(log.Lshortfile)
+
 	// Set the locale to the system's default
 	pdf.SetLocale()
 

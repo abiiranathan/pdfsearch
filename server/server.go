@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -57,17 +58,17 @@ func Run(config *cli.Config, pagesDir string, viewsFs embed.FS, staticFS embed.F
 	// Clean up temporary files every 2 minutes.
 	go cleanUpTemporaryFiles(pagesDir)
 
-	log.Printf("Listening on http://0.0.0.0:%d\n", config.Port)
+	defer GracefulShutdown(server)
 
-	defer GracefulShutdown(server, 10*time.Second)
+	log.Printf("Listening on http://0.0.0.0:%d\n", config.Port)
 
 	// Start the server
 	err = server.ListenAndServe()
 	if err != nil {
-		log.Fatalf("Unable to start server: %v\n", err)
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Server terminated with error: %v\n", err)
+		}
 	}
-
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", config.Port), mux))
 }
 
 func cleanUpTemporaryFiles(dir string) {
@@ -111,10 +112,13 @@ func GracefulShutdown(server *http.Server, timeout ...time.Duration) {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt)
+	log.Println("waiting on os.Interrupt")
+
 	<-quit
 	ctx, cancel := context.WithTimeout(context.Background(), t)
 	defer cancel()
 
+	log.Println("Shutting down the server")
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatalln(err)
 	}

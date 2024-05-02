@@ -48,80 +48,7 @@ cd pdfsearch
 go install # or go build
 ```
 
-On Windows, download the unofficial poppler-glib and cairo libraries from the following links:
-
-1. [poppler-glib - Github Release 24](https://github.com/oschwartz10612/poppler-windows/releases/tag/v24.02.0-0)
-
-Folder Structure:
-```txt
-├── Library
-│   ├── bin
-│   │   ├── cairo.dll
-│   │   ├── charset.dll
-│   │   ├── deflate.dll
-│   │   ├── expat.dll
-│   │   ├── fontconfig-1.dll
-│   │   ├── freetype.dll
-│   │   ├── iconv.dll
-│   │   ├── jpeg8.dll
-│   │   ├── lcms2.dll
-│   │   ├── Lerc.dll
-│   │   ├── libcrypto-3-x64.dll
-│   │   ├── libcurl.dll
-│   │   ├── libexpat.dll
-│   │   ├── liblzma.dll
-│   │   ├── libpng16.dll
-│   │   ├── libssh2.dll
-│   │   ├── libtiff.dll
-│   │   ├── libzstd.dll
-│   │   ├── openjp2.dll
-│   │   ├── pdfattach.exe
-│   │   ├── pdfdetach.exe
-│   │   ├── pdffonts.exe
-│   │   ├── pdfimages.exe
-│   │   ├── pdfinfo.exe
-│   │   ├── pdfseparate.exe
-│   │   ├── pdftocairo.exe
-│   │   ├── pdftohtml.exe
-│   │   ├── pdftoppm.exe
-│   │   ├── pdftops.exe
-│   │   ├── pdftotext.exe
-│   │   ├── pdfunite.exe
-│   │   ├── pixman-1-0.dll
-│   │   ├── poppler-cpp.dll
-│   │   ├── poppler.dll
-│   │   ├── poppler-glib.dll
-│   │   ├── tiff.dll
-│   │   ├── zlib.dll
-│   │   ├── zstd.dll
-│   │   └── zstd.exe
-│   ├── include
-│   │   └── poppler
-│   ├── lib
-│   │   ├── pkgconfig
-│   │   ├── poppler-cpp.lib
-│   │   ├── poppler-glib.lib
-│   │   └── poppler.lib
-│   └── share
-│       └── man
-└── share
-    └── poppler
-        ├── cidToUnicode
-        ├── CMakeLists.txt
-        ├── cMap
-        ├── COPYING
-        ├── COPYING.adobe
-        ├── COPYING.gpl2
-        ├── Makefile
-        ├── nameToUnicode
-        ├── poppler-data.pc
-        ├── poppler-data.pc.in
-        ├── README
-        └── unicodeMap
-
-
-```
-We have not tested the Windows build. If you have any issues, please let us know.
+> We have not tested the Windows build. If you have any issues, please let us know.
 
 ## USAGE
 
@@ -135,10 +62,10 @@ This command will create an binary index file with the text extracted from the P
 
 1. Run the web server
 ```bash
-./pdfsearch runserver -p 8080
+./pdfsearch serve -p 8080
 
 # Or specify the index file
-./pdfsearch runserver -p 8080 -i ~/index.bin
+./pdfsearch serve -p 8080 -i ~/index.bin
 ```
 
 This command will start a web server on port 8080. You can specify a different port with the `-p` flag. You can specify a different index file with the `-i` flag.

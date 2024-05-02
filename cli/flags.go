@@ -13,7 +13,7 @@ import (
 	"github.com/abiiranathan/pdfsearch/search"
 )
 
-func DefineFlags(config *Config, runserver func()) *goflag.Context {
+func setDefaultIndexPath(config *Config) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("os.UserHomeDir() unable failed: %v\n", err)
@@ -29,10 +29,14 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 			}
 		}
 	}
+}
+
+func DefineFlags(config *Config, runserver func()) *goflag.Context {
+	setDefaultIndexPath(config)
 
 	// Flags required by multiple subcomands
 	indexFlag := goflag.Flag{
-		FlagType:  goflag.FlagFilePath,
+		FlagType:  goflag.FlagString,
 		Name:      "index",
 		ShortName: "i",
 		Value:     &config.Index,
@@ -44,13 +48,8 @@ func DefineFlags(config *Config, runserver func()) *goflag.Context {
 	// Create flag context.
 	ctx := goflag.NewContext()
 
-	// global flags
-	concurrencyValidators := []func(any) (bool, string){goflag.Min(1), goflag.Max(100)}
-	ctx.AddFlag(goflag.FlagInt, "concurrency", "c", &config.MaxConcurrency,
-		"No of concurrent processes", false, concurrencyValidators...)
-
 	// build_index subcommand
-	buildCmd := ctx.AddSubCommand("build_index", "Build a file index for a specified folder", buildHandler(config))
+	buildCmd := ctx.AddSubCommand("build_index", "Build a file index for a specified folder", serializeHandler(config))
 	buildCmd.AddFlag(goflag.FlagDirPath, "directory", "d", &config.Directory, "The directory to index", true)
 	buildCmd.AddFlagPtr(&indexFlag)
 
@@ -84,15 +83,15 @@ func searchHandler(config *Config) func() {
 	}
 }
 
-func buildHandler(config *Config) func() {
+func serializeHandler(config *Config) func() {
 	return func() {
-		search.Serialize(config.Directory, config.Index, config.MaxConcurrency)
+		search.Serialize(config.Directory, config.Index)
 	}
 }
 
 func printMatches(matches *pdf.Matches) {
 	for _, match := range *matches {
-		fmt.Printf("%s Page: %d : %s\n", match.Filename, match.PageNum, match.Text)
+		fmt.Printf("%s Page: %d : %s\n\n\n", match.Filename, match.PageNum, match.Text)
 	}
 }
 

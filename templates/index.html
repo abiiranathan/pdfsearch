@@ -7,6 +7,7 @@
     <meta name="description" content="The local pdf search engine for books" />
     <meta name="keywords" content="PDF, Search engine, local, search, books" />
     <title>PDF Search Engine</title>
+    <link rel="shortcut icon" href="/static/favicon.png" type="image/png" />
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/script.js" defer></script>
   </head>
@@ -14,35 +15,52 @@
   <body>
     <header>
       <div class="brand">
-        <a href="/"><h1>PDF Search Engine</h1></a>
+        <a href="/">
+          <img
+            src="/static/pdfsearch.png"
+            alt="PDF Search Engine"
+            width="48"
+            height="48"
+          />
+          <h1>PDF Search Engine</h1>
+        </a>
       </div>
     </header>
 
     <main class="main">
-      <form method="get">
+      <div class="books">
+        <h2 style="padding: 10px; text-align: center">Available Books</h2>
         <input
-          type="text"
-          name="query"
-          class="query"
-          id="query"
-          placeholder="Type your query here..."
+          type="search"
+          name="search_books"
+          id="search_books"
+          placeholder="Search books"
+          style="margin: 0.5rem 1rem"
         />
-        <select class="book_select" name="book" id="book_select">
-          <option value="">Search All Books</option>
-          {{ range .books }}
-          <option value="{{ .ID}}">{{ .Name }}</option>
-          {{ end }}
-        </select>
-      </form>
-      <div id="status"></div>
-      <div class="container">
-        <div class="books">
-          <h2 style="padding: 10px; text-align: center">Available Books</h2>
-          {{ range .books }}
-          <a href="{{ .URL }}" target="_blank">{{ .Name }}</a>
-          {{ end }}
+        {{ range .books }}
+        <a class="book_link" href="{{ .URL }}" target="_blank">{{ .Name }}</a>
+        {{ end }}
+      </div>
+      <div>
+        <form method="get">
+          <input
+            type="text"
+            name="query"
+            class="query"
+            id="query"
+            placeholder="Type your query here..."
+          />
+          <select class="book_select" name="book" id="book_select">
+            <option value="">Search All Books</option>
+            {{ range .books }}
+            <option value="{{ .ID}}">{{ .Name }}</option>
+            {{ end }}
+          </select>
+        </form>
+        <div id="status"></div>
+        <div class="container">
+          <div id="results"></div>
         </div>
-        <div id="results"></div>
       </div>
     </main>
     <footer>&copy; 2024 &nbsp; Dr. Abiira Nathan</footer>

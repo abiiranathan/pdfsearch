@@ -7,6 +7,7 @@
 #include <poppler/glib/poppler.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,9 +15,21 @@
 #include <pthread.h>
 #endif
 
+typedef struct MDocument {
+    PopplerDocument* document;
+    int num_pages;
+} MDocument;
+
 // Open a PDF document and return a PopplerDocument object.
 // The number of pages in the document is stored in the num_pages parameter.
 PopplerDocument* open_document(const char* filename, int* num_pages);
+
+// Open multiple documents simultaneously.
+// The caller is reponsible for allocating memory for the MDocument array and freeing it.
+bool open_documents(MDocument* md, const char** filenames, size_t num_files);
+
+// free multiple documents opened with open_documents.
+void free_documents(MDocument** md, size_t num_files, bool free_array);
 
 // Render a pdf of a Poppler Page with cairo.
 bool poppler_page_to_pdf(PopplerPage* page, const char* output_pdf);

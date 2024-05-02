@@ -3,12 +3,12 @@ package search
 import (
 	"bytes"
 	"cmp"
-	"context"
 	"encoding/gob"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +16,6 @@ import (
 	"github.com/abiiranathan/pdfsearch/pdf"
 	"github.com/bbalet/stopwords"
 	"github.com/jdkato/prose/v2"
-	"golang.org/x/sync/errgroup"
 )
 
 func WalkDir(dir string, extensions []string) ([]string, error) {
@@ -51,136 +50,105 @@ func WalkDir(dir string, extensions []string) ([]string, error) {
 	return files, nil
 }
 
-func SearchDirectory(ctx context.Context, dir string, pattern string, maxConcurrency int) (pdf.Matches, error) {
-	files, err := WalkDir(dir, []string{".pdf"})
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]pdf.Match, 0, len(files)*10)
-
-	wg := sync.WaitGroup{}
-	semaphore := make(chan struct{}, maxConcurrency)
-	defer close(semaphore)
-
-	wg.Add(len(files))
-	for _, file := range files {
-		// Acquire a slot from the semaphore
-		semaphore <- struct{}{}
-
-		go func(file string) {
-			defer func() {
-				// Release the slot back to the semaphore
-				<-semaphore
-				wg.Done()
-			}()
-			searchFile(ctx, file, pattern, &results, maxConcurrency)
-		}(file)
-	}
-
-	wg.Wait()
-	return results, nil
+type Page struct {
+	PageNum  int    // Page number as in index(zero-indexed) in the PopplerDocument
+	Filename string // Pointer to filename of the pdf file.
+	Text     string // Page text for the PopplerPage.
 }
 
-func searchFile(ctx context.Context, file string, pattern string, collector *[]pdf.Match, maxConcurrency int) {
+// Mutex to lock collector slice to avoid race condition during append.
+var collectorMU sync.Mutex
+
+func CollectPages(file string, collector *[]Page) error {
 	doc := pdf.Open(file)
 	if doc == nil {
-		panic("Error opening PDF")
+		return fmt.Errorf("doc is nil")
 	}
 	defer doc.Close()
 
-	fileChan := make(chan pdf.Match, 10)
+	numWorkers := runtime.NumCPU()
+	jobs := make(chan int, numWorkers)
+	results := make(chan Page, numWorkers)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(numWorkers)
+
+	// Start worker goroutines to perform the search in parallel.
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			defer wg.Done()
+
+			for page := range jobs {
+				func(page int) {
+					p := doc.GetPage(page)
+					defer p.Close()
+					text := p.Text()
+
+					results <- Page{
+						PageNum:  page,
+						Filename: doc.Path,
+						Text:     text,
+					}
+				}(page)
+			}
+		}()
+	}
+
+	// Send jobs to workers
 	go func() {
-		defer wg.Done()
-		doc.Search(ctx, pattern, fileChan, maxConcurrency)
+		for page := 0; page < doc.NumPages; page++ {
+			jobs <- page
+		}
+		close(jobs)
 	}()
 
-	for match := range fileChan {
-		*collector = append(*collector, match)
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	for result := range results {
+		collectorMU.Lock()
+		*collector = append(*collector, result)
+		collectorMU.Unlock()
 	}
-
-	// Wait for the search to complete to avoid goroutine leaks
-	wg.Wait()
-}
-
-type PageMeta struct {
-	PageNum  int    // Page number
-	Filename string // Pointer to filename of the pdf file.
-	PageText string // Line containing the match
-}
-
-func getFileMetadata(file string, collector *[]PageMeta, maxConcurrency int) error {
-	doc := pdf.Open(file)
-	if doc == nil {
-		return fmt.Errorf("unable to open document: %v", file)
-	}
-	defer doc.Close()
-
-	semaphore := make(chan struct{}, maxConcurrency)
-	defer close(semaphore)
-
-	g := errgroup.Group{}
-	for page := range doc.NumPages {
-		page := page
-
-		// Acquire a slot from the semaphore
-		semaphore <- struct{}{}
-
-		g.Go(func() error {
-			defer func() {
-				<-semaphore
-			}()
-
-			p := doc.GetPage(page)
-			defer p.Close()
-
-			*collector = append(*collector, PageMeta{
-				PageNum:  page,
-				Filename: doc.Path,
-				PageText: p.Text(),
-			})
-			return nil
-		})
-
-	}
-	return g.Wait()
-}
-
-func SearchFile(ctx context.Context, file string, pattern string, maxConcurrency int) (pdf.Matches, error) {
-	var results []pdf.Match
-	searchFile(ctx, file, pattern, &results, maxConcurrency)
-	return results, nil
+	return nil
 }
 
 const pathCacheFilename = "paths.bin"
 
-type mapValue struct {
+type pageJob struct {
 	index    IndexKey
 	pageText string
 }
 
-func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) (pdf.Matches, error) {
-	matches := make(pdf.Matches, 0, 25)
+type fileJob struct {
+	index int
+	name  string
+}
+
+func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matches, error) {
+	matches := make(pdf.Matches, 0, 100)
 	const numWorkers int = 10
 
-	jobs := make(chan mapValue, len(*searchIndex))
+	jobs := make(chan pageJob, len(*searchIndex))
 	results := make(chan pdf.Match, len(*searchIndex))
 
-	// convert pattern to lowercase
-	pattern = strings.ToLower(stopwords.CleanString(pattern, "en", false))
-	originalPattern := pattern
+	// Store a reference to original Query
+	origQuery := query
 
-	// create a pattern document
-	patternDoc, err := prose.NewDocument(pattern, prose.WithExtraction(false))
+	// convert pattern to lowercase
+	query = strings.ToLower(stopwords.CleanString(query, "en", false))
+
+	// create a query document
+	queryDoc, err := prose.NewDocument(query, prose.WithExtraction(false), prose.WithSegmentation(false))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pattern document: %v", err)
 	}
 
-	// Tokenize the pattern
-	patternTokens := patternDoc.Tokens()
+	// Tokenize the query document
+	queryTokens := queryDoc.Tokens()
 
 	// Identify the keywords(Nouns and Verbs) in the pattern
 	/*
@@ -190,10 +158,10 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 		VBZ: Verb, 3rd person singular present
 		JJ: Adjective
 	*/
-	keywords := make([]string, 0, len(patternTokens))
-	nouns := make([]string, 0, len(patternTokens))
+	keywords := make([]string, 0, len(queryTokens))
+	nouns := make([]string, 0, len(queryTokens))
 
-	for _, token := range patternTokens {
+	for _, token := range queryTokens {
 		if token.Tag == "NN" ||
 			token.Tag == "VB" ||
 			token.Tag == "NNS" ||
@@ -208,13 +176,13 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 	}
 
 	if len(keywords) > 0 {
-		pattern = strings.Join(keywords, " ")
+		query = strings.Join(keywords, " ")
 	}
 
 	var wg sync.WaitGroup
 	wg.Add(numWorkers + 1) // +1 for the results channel closer
 
-	threshold := min(len(originalPattern), 10)
+	threshold := min(len(origQuery), 10)
 
 	// Start worker goroutines to perform the search in parallel.
 	for i := 0; i < numWorkers; i++ {
@@ -250,14 +218,14 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 						continue
 					}
 
-					hasExactMatch := strings.Contains(strings.ToLower(line), originalPattern)
-					lvd := stopwords.LevenshteinDistance([]byte(strings.ToLower(line)), []byte(pattern), "en", false)
+					hasExactMatch := strings.Contains(strings.ToLower(line), origQuery)
+					lvd := stopwords.LevenshteinDistance([]byte(strings.ToLower(line)), []byte(query), "en", false)
 					lvdFloat := float32(lvd)
 
 					if hasExactMatch || lvd < threshold {
 						if hasExactMatch {
 							// The exact match is given a higher score (smaller distance)
-							lvdFloat = float32(len(originalPattern)+len(line)) / 100
+							lvdFloat = float32(len(origQuery)+len(line)) / 100
 						}
 
 						snippet := pdf.GetLineContext(i, &lines)
@@ -285,13 +253,13 @@ func SearchFromIndex(pattern string, searchIndex *SearchIndex, books ...uint32) 
 			if searchSpecificBooks {
 				currentID := pdf.GetPathHash(pdfNamePage.Filename)
 				if slices.Contains(books, currentID) {
-					jobs <- mapValue{
+					jobs <- pageJob{
 						index:    pdfNamePage,
 						pageText: pageText,
 					}
 				}
 			} else {
-				jobs <- mapValue{
+				jobs <- pageJob{
 					index:    pdfNamePage,
 					pageText: pageText,
 				}
@@ -344,62 +312,72 @@ type IndexKey struct {
 // [{Name, 10}: "This is page text"]
 type SearchIndex map[IndexKey]string
 
-func Serialize(directory string, outfile string, maxConcurrency int) error {
+func Serialize(directory string, outfile string, nworkers ...int) error {
+	workers := 2
+	if len(nworkers) > 0 {
+		workers = nworkers[0]
+	}
+
 	files, err := WalkDir(directory, []string{".pdf"})
 	if err != nil {
 		return fmt.Errorf("unable to load files at %s: %v", directory, err)
 	}
 
-	log.Printf("Found %d files in %s\n", len(files), directory)
+	numFiles := len(files)
+	log.Printf("Found %d files in %s\n", numFiles, directory)
 
-	results := make([]PageMeta, 0, len(files)*2)
-	wg := sync.WaitGroup{}
-	semaphore := make(chan struct{}, maxConcurrency)
-	defer close(semaphore)
+	log.Println("Processing pdfs in", workers, "goroutines")
 
-	count := len(files)
-	wg.Add(count)
+	// Initialize slice to collect all pages of all documents.
+	results := []Page{}
 
-	for i, file := range files {
-		i := i + 1 // Not required in go1.22 but I don't want lint errors.
-		// Acquire a slot from the semaphore
-		semaphore <- struct{}{}
+	var wg sync.WaitGroup
+	wg.Add(workers)
 
-		go func(file string) {
-			defer func() {
-				// Release the slot back to the semaphore
-				<-semaphore
-				wg.Done()
-			}()
+	jobs := make(chan fileJob, numFiles/workers)
 
-			err := getFileMetadata(file, &results, maxConcurrency)
-			if err != nil {
-				log.Println(err)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+
+			for job := range jobs {
+				fmt.Printf("[worker-%d] (%d/%d) Processing: %s\n", i, job.index, numFiles, job.name)
+				err := CollectPages(job.name, &results)
+				if err != nil {
+					log.Println("unable to process", job.name)
+				}
 			}
-			fmt.Printf("(%d/%d) Processed: %s\n", i, count, file)
-		}(file)
+		}()
 	}
+
+	go func() {
+		for i, file := range files {
+			jobs <- fileJob{index: i, name: file}
+		}
+		close(jobs)
+	}()
 
 	wg.Wait()
 
 	// Build the index
+	log.Println("Building the search index....")
 	index := BuildIndex(&results)
 
+	log.Println("Encoding data with GOB encoding...")
 	buf := new(bytes.Buffer)
 	gobEncoder := gob.NewEncoder(buf)
 	err = gobEncoder.Encode(index)
 	if err != nil {
 		return err
 	}
+
 	err = os.WriteFile(outfile, buf.Bytes(), os.ModePerm)
 	if err != nil {
 		return fmt.Errorf("unable to write index to %s: %v", outfile, err)
 	}
-
-	log.Println("Index written to ", outfile)
+	log.Println("SearchIndex written to", outfile)
 
 	// write paths to cache
-	log.Println("Writing paths to cache")
 	err = pdf.SerializeCaches(pathCacheFilename, files)
 	if err != nil {
 		return fmt.Errorf("unable to write paths to cache: %v", err)
@@ -427,13 +405,13 @@ func Deserialize(index string) (*SearchIndex, error) {
 	return &searchIndex, nil
 }
 
-func BuildIndex(data *[]PageMeta) *SearchIndex {
+func BuildIndex(data *[]Page) *SearchIndex {
 	m := make(SearchIndex, len(*data))
 
 	for _, match := range *data {
 		key := IndexKey{Filename: match.Filename, Page: match.PageNum}
 		if _, ok := m[key]; !ok {
-			m[key] = match.PageText
+			m[key] = match.Text
 		}
 	}
 	return &m
