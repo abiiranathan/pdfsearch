@@ -16,19 +16,14 @@ error "Windows is not supported yet"
 */
 import "C"
 import (
-	"context"
 	"encoding/gob"
 	"fmt"
 	"hash/fnv"
 	"os"
-	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"unsafe"
-
-	"golang.org/x/sync/errgroup"
 )
 
 type Document struct {
@@ -217,22 +212,6 @@ func (page *Page) Text() string {
 		return ""
 	}
 	defer C.g_free(C.gpointer(g_text))
-
-	// skip all arrows
-	skipToken := []rune{0x25B6, 0x25B8, 0x25B7, 0x25B9, 0x25BA, 0x25BB, 0x25C0, 0x25C2,
-		0x25C1, 0x25C3, 0x25C4, 0x25C5, 0x25C6, 0x25C7, 0x25C8, 0x25C9, 0x25CA, 0x25CB,
-		0x25CC, 0x25CD, 0x25CE, 0x25CF, 0x25D0, 0x25D1, 0x25D2, 0x25D3, 0x25D4, 0x25D5,
-		0x25D6, 0x25D7, 0x25D8, 0x25D9, 0x25DA, 0x25DB, 0x25DC, 0x25DD, 0x25DE, 0x25DF,
-		0x25E0, 0x25E1, 0x25E2, 0x25E3, 0x25E4, 0x25E5, 0x25E6, 0x25E7, 0x25E8, 0x25E9,
-		0x25EA, 0x25EB, 0x25EC, 0x25ED, 0x25EE, 0x25EF, 0x25F0, 0x25F1, 0x25F2, 0x25F3,
-		0x25F4, 0x25F5, 0x25F6, 0x25F7, 0x25F8, 0x25F9, 0x25FA, 0x25FB, 0x25FC, 0x25FD,
-		0x25FE, 0x25FF, 0x0080}
-
-	text := C.GoString((*C.char)(g_text))
-	text = strings.ReplaceAll(text, "\u0089", "")
-	for _, token := range skipToken {
-		text = strings.ReplaceAll(text, string(token), "")
-	}
 	return C.GoString(g_text)
 }
 
@@ -279,58 +258,6 @@ type Match struct {
 }
 
 type Matches []Match
-
-func (page *Page) Search(ctx context.Context, pattern string) Matches {
-	select {
-	case <-ctx.Done():
-		return nil
-	default:
-		return GetPageMatches(page.Text(), pattern, page.doc.Path, page.PageNum)
-	}
-}
-
-func GetPageMatches(pageText string, pattern string, pdfPath string, pageNum int) Matches {
-	lines := strings.Split(pageText, "\n")
-	matches := make([]Match, 0, len(lines))
-	pattern = strings.ToLower(pattern)
-
-	queryWords := strings.Fields(pattern)
-
-	// Search for the pattern in each line
-	for i, line := range lines {
-		lowerline := strings.ToLower(line)
-
-		alreadyExists := func(line string) bool {
-			return slices.ContainsFunc(matches, func(m Match) bool {
-				return m.Text == line
-			})
-		}
-
-		lineScore := 0.0
-		hasMatch := false
-
-		for _, qw := range queryWords {
-			if strings.Contains(lowerline, qw) {
-				lineScore += 1.0
-				hasMatch = true
-			}
-		}
-
-		if hasMatch && !alreadyExists(line) {
-			matches = append(matches, Match{
-				ID:       GetPathHash(pdfPath),
-				PageNum:  pageNum,
-				Filename: pdfPath,
-				BaseName: filepath.Base(pdfPath),
-				Text:     line,
-				Context:  GetLineContext(i, &lines),
-				Score:    float32(lineScore),
-			})
-		}
-
-	}
-	return slices.Clip(matches)
-}
 
 func GetLineContext(lineno int, lines *[]string) string {
 	size := len(*lines)
@@ -439,54 +366,4 @@ func DeserializeCaches(in string) error {
 	defer mu.Unlock()
 	hashesCache = cache.Hashes
 	return nil
-}
-
-// Search searches for the given pattern in all pages of the PDF document.
-// It sends the matches to the provided channel.
-// It uses a semaphore to limit the number of concurrent searches.
-// The function returns when the context is canceled.
-// @param ctx: The context used to cancel the search operation.
-// @param pattern: The search pattern.
-// @param matches: The channel to send the matches to.
-// @param maxConcurrency: The maximum number of concurrent searches.
-func (pdf *Document) Search(ctx context.Context, pattern string,
-	matches chan<- Match, maxConcurrency int) {
-	semaphore := make(chan struct{}, maxConcurrency)
-	defer close(semaphore)
-
-	g, ctx := errgroup.WithContext(ctx)
-	for page := range pdf.NumPages {
-		page := page
-
-		// Acquire a slot from the semaphore
-		semaphore <- struct{}{}
-
-		g.Go(func() error {
-			defer func() {
-				// Release the slot back to the semaphore
-				<-semaphore
-			}()
-
-			page := pdf.GetPage(page)
-			defer page.Close()
-
-			for _, match := range page.Search(ctx, pattern) {
-				select {
-				case matches <- match:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-			return nil
-		})
-	}
-
-	// Close the channel when all goroutines are done
-	err := g.Wait()
-	if err != nil {
-		if err != context.Canceled {
-			fmt.Println("Error searching PDF:", err)
-		}
-	}
-	close(matches)
 }

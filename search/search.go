@@ -1,14 +1,10 @@
 package search
 
 import (
-	"bytes"
 	"cmp"
-	"encoding/gob"
 	"fmt"
-	"log"
-	"os"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -18,36 +14,27 @@ import (
 	"github.com/jdkato/prose/v2"
 )
 
-func WalkDir(dir string, extensions []string) ([]string, error) {
-	var files []string
+const pathCacheFilename = "paths.bin"
 
-	// Search for PDF files in the directory
-	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+// Key in search index map.
+type IndexKey struct {
+	Filename string // Absolute path to the PDF on disk.
+	Page     int    // The page number (zero-indexed)
+}
 
-		// Skip the directory itself and the parent directory
-		if path == dir || path == "." || path == ".." {
-			return nil
-		}
+// SearchIndex is map of IndexKey(pdfName, page) to the page text.
+type SearchIndex map[IndexKey]string
 
-		// Skip hidden files
-		if d.Name()[0] == '.' {
-			return filepath.SkipDir
-		}
+// used by the collector while processing multiple pages in parallel.
+type pageJob struct {
+	index    IndexKey
+	pageText string
+}
 
-		ext := filepath.Ext(strings.ToLower(path))
-		if d.Type().IsRegular() && slices.Contains(extensions, ext) {
-			files = append(files, path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-	return files, nil
+// Used to carry arguments to the collector.
+type fileJob struct {
+	index int
+	name  string
 }
 
 type Page struct {
@@ -56,81 +43,53 @@ type Page struct {
 	Text     string // Page text for the PopplerPage.
 }
 
-// Mutex to lock collector slice to avoid race condition during append.
-var collectorMU sync.Mutex
-
-func CollectPages(file string, collector *[]Page) error {
-	doc := pdf.Open(file)
-	if doc == nil {
-		return fmt.Errorf("doc is nil")
-	}
-	defer doc.Close()
-
-	numWorkers := runtime.NumCPU()
-	jobs := make(chan int, numWorkers)
-	results := make(chan Page, numWorkers)
-
-	var wg sync.WaitGroup
-	wg.Add(numWorkers)
-
-	// Start worker goroutines to perform the search in parallel.
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			defer wg.Done()
-
-			for page := range jobs {
-				func(page int) {
-					p := doc.GetPage(page)
-					defer p.Close()
-					text := p.Text()
-
-					results <- Page{
-						PageNum:  page,
-						Filename: doc.Path,
-						Text:     text,
-					}
-				}(page)
-			}
-		}()
-	}
-
-	// Send jobs to workers
-	go func() {
-		for page := 0; page < doc.NumPages; page++ {
-			jobs <- page
+// Returns true if the string str contains any element in arr.
+func stringContainsAny(str string, arr []string) bool {
+	for _, item := range arr {
+		if strings.Contains(str, item) {
+			return true
 		}
-		close(jobs)
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	for result := range results {
-		collectorMU.Lock()
-		*collector = append(*collector, result)
-		collectorMU.Unlock()
 	}
-	return nil
+	return false
 }
 
-const pathCacheFilename = "paths.bin"
+// BuildIndex builds a search index from Pages of pdf text.
+func BuildIndex(data *[]Page) *SearchIndex {
+	m := make(SearchIndex, len(*data))
 
-type pageJob struct {
-	index    IndexKey
-	pageText string
+	for _, match := range *data {
+		key := IndexKey{Filename: match.Filename, Page: match.PageNum}
+		if _, ok := m[key]; !ok {
+			m[key] = match.Text
+		}
+	}
+	return &m
 }
 
-type fileJob struct {
-	index int
-	name  string
+var indexPattern = regexp.MustCompile(`(.+)[,\s]\s*(\d+)(.*)?`)
+
+func isPageIndex(pageText string) bool {
+	return indexPattern.MatchString(pageText)
+
 }
 
+// EntryPoint to the search engine.
+// Searches the index for a given query and returns the matches.
+// If any books are provided in arguments, only matches from these books are returned.
 func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matches, error) {
-	matches := make(pdf.Matches, 0, 100)
-	const numWorkers int = 10
+	const (
+		NownSingular        = "NN"
+		Verb                = "VB"
+		NownPlural          = "NNS"
+		VerbSingularPresent = "VBZ"
+		Adjective           = "JJ"
+
+		numWorkers int = 10
+		maxMatches int = 200
+	)
+
+	matches := make(pdf.Matches, 0, maxMatches) // Initialize slice for matches
+	threshold := float32(min(len(query), 10))   // Threshold for the Levenistein distance
 
 	jobs := make(chan pageJob, len(*searchIndex))
 	results := make(chan pdf.Match, len(*searchIndex))
@@ -150,27 +109,19 @@ func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matche
 	// Tokenize the query document
 	queryTokens := queryDoc.Tokens()
 
-	// Identify the keywords(Nouns and Verbs) in the pattern
-	/*
-		NN: Noun, singular or mass
-		VB: Verb, base form
-		NNS: Noun, plural
-		VBZ: Verb, 3rd person singular present
-		JJ: Adjective
-	*/
 	keywords := make([]string, 0, len(queryTokens))
 	nouns := make([]string, 0, len(queryTokens))
 
 	for _, token := range queryTokens {
-		if token.Tag == "NN" ||
-			token.Tag == "VB" ||
-			token.Tag == "NNS" ||
-			token.Tag == "VBZ" ||
-			token.Tag == "JJ" {
+		if token.Tag == NownSingular ||
+			token.Tag == Verb ||
+			token.Tag == NownPlural ||
+			token.Tag == VerbSingularPresent ||
+			token.Tag == Adjective {
 			keywords = append(keywords, token.Text)
 		}
 
-		if token.Tag == "NN" || token.Tag == "NNS" {
+		if token.Tag == NownSingular || token.Tag == NownPlural {
 			nouns = append(nouns, token.Text)
 		}
 	}
@@ -182,55 +133,46 @@ func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matche
 	var wg sync.WaitGroup
 	wg.Add(numWorkers + 1) // +1 for the results channel closer
 
-	threshold := min(len(origQuery), 10)
-
-	// Start worker goroutines to perform the search in parallel.
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			defer wg.Done()
 
 			for kv := range jobs {
 				lines := strings.Split(kv.pageText, "\n")
+
+				// Am not interested in the book index
+				if isPageIndex(kv.pageText) {
+					continue
+				}
+
 				for i, line := range lines {
 					// If the line does not contains the keyword, skip it
-					continueSearch := false
-					for _, keyword := range keywords {
-						if strings.Contains(line, keyword) {
-							continueSearch = true
-							break
-						}
-					}
-
-					if !continueSearch {
+					if !stringContainsAny(line, keywords) {
 						continue
 					}
 
 					// If no nown is found in the line, skip it
-					hasNoun := false
-					for _, noun := range nouns {
-						if strings.Contains(line, noun) {
-							hasNoun = true
-							break
-						}
-					}
-
-					if !hasNoun {
+					if !stringContainsAny(line, nouns) {
 						continue
 					}
 
+					// if the line contains an exact match to query
 					hasExactMatch := strings.Contains(strings.ToLower(line), origQuery)
-					lvd := stopwords.LevenshteinDistance([]byte(strings.ToLower(line)), []byte(query), "en", false)
-					lvdFloat := float32(lvd)
 
-					if hasExactMatch || lvd < threshold {
+					// Compute the string Levenshtein Distance
+					levisteinDistance := float32(stopwords.LevenshteinDistance(
+						[]byte(strings.ToLower(line)), []byte(query), "en", false))
+
+					if hasExactMatch || levisteinDistance < threshold {
 						if hasExactMatch {
 							// The exact match is given a higher score (smaller distance)
-							lvdFloat = float32(len(origQuery)+len(line)) / 100
+							levisteinDistance = float32(len(origQuery)+len(line)) / 100
 						}
 
+						// generate a snippet of text around the current line.
 						snippet := pdf.GetLineContext(i, &lines)
 
-						// Create a new match
+						// send match on the results channel.
 						results <- pdf.Match{
 							ID:       pdf.GetPathHash(kv.index.Filename),
 							Filename: kv.index.Filename,
@@ -238,7 +180,7 @@ func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matche
 							PageNum:  kv.index.Page,
 							Text:     line,
 							Context:  snippet,
-							Score:    lvdFloat,
+							Score:    levisteinDistance,
 						}
 					}
 				}
@@ -268,7 +210,6 @@ func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matche
 		close(jobs)
 
 		// Account for the +1 in the wait group
-		// otherwise we leak this goroutine
 		wg.Done()
 	}()
 
@@ -276,143 +217,22 @@ func Search(query string, searchIndex *SearchIndex, books ...uint32) (pdf.Matche
 	wg.Wait()
 	close(results)
 
+	seen := make(map[string]struct{}, maxMatches)
 	for match := range results {
-		matches = append(matches, match)
-	}
-
-	// Remove duplicates but keep the order
-	deduped := make(pdf.Matches, 0, len(matches))
-	seen := make(map[string]struct{}, len(matches))
-	for _, match := range matches {
-		if _, ok := seen[match.Text]; !ok {
+		if _, exists := seen[match.Text]; !exists {
 			seen[match.Text] = struct{}{}
-			deduped = append(deduped, match)
+			matches = append(matches, match)
 		}
 	}
 
 	// Sort matches by score least LV distance
-	slices.SortStableFunc(deduped, func(a, b pdf.Match) int {
+	slices.SortStableFunc(matches, func(a, b pdf.Match) int {
 		return cmp.Compare(a.Score, b.Score)
 	})
 
 	// Clip the matches to a maximum of 200
-	const maxMatches = 200
-	if len(deduped) > maxMatches {
-		deduped = deduped[:maxMatches]
+	if len(matches) > maxMatches {
+		matches = matches[:maxMatches]
 	}
-	return deduped, nil
-}
-
-type IndexKey struct {
-	Filename string
-	Page     int
-}
-
-// Index contains a given pdf and page with each page text.
-// [{Name, 10}: "This is page text"]
-type SearchIndex map[IndexKey]string
-
-func Serialize(directory string, outfile string, nworkers ...int) error {
-	workers := 2
-	if len(nworkers) > 0 {
-		workers = nworkers[0]
-	}
-
-	files, err := WalkDir(directory, []string{".pdf"})
-	if err != nil {
-		return fmt.Errorf("unable to load files at %s: %v", directory, err)
-	}
-
-	numFiles := len(files)
-	log.Printf("Found %d files in %s\n", numFiles, directory)
-
-	log.Println("Processing pdfs in", workers, "goroutines")
-
-	// Initialize slice to collect all pages of all documents.
-	results := []Page{}
-
-	var wg sync.WaitGroup
-	wg.Add(workers)
-
-	jobs := make(chan fileJob, numFiles/workers)
-
-	for i := 0; i < workers; i++ {
-		go func() {
-			defer wg.Done()
-
-			for job := range jobs {
-				fmt.Printf("[worker-%d] (%d/%d) Processing: %s\n", i, job.index, numFiles, job.name)
-				err := CollectPages(job.name, &results)
-				if err != nil {
-					log.Println("unable to process", job.name)
-				}
-			}
-		}()
-	}
-
-	go func() {
-		for i, file := range files {
-			jobs <- fileJob{index: i, name: file}
-		}
-		close(jobs)
-	}()
-
-	wg.Wait()
-
-	// Build the index
-	log.Println("Building the search index....")
-	index := BuildIndex(&results)
-
-	log.Println("Encoding data with GOB encoding...")
-	buf := new(bytes.Buffer)
-	gobEncoder := gob.NewEncoder(buf)
-	err = gobEncoder.Encode(index)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(outfile, buf.Bytes(), os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("unable to write index to %s: %v", outfile, err)
-	}
-	log.Println("SearchIndex written to", outfile)
-
-	// write paths to cache
-	err = pdf.SerializeCaches(pathCacheFilename, files)
-	if err != nil {
-		return fmt.Errorf("unable to write paths to cache: %v", err)
-	}
-	return err
-}
-
-func Deserialize(index string) (*SearchIndex, error) {
-	b, err := os.ReadFile(index)
-	if err != nil {
-		return nil, err
-	}
-
-	searchIndex := make(SearchIndex)
-	err = gob.NewDecoder(bytes.NewReader(b)).Decode(&searchIndex)
-	if err != nil {
-		return nil, err
-	}
-
-	// Load paths from cache
-	err = pdf.DeserializeCaches(pathCacheFilename)
-	if err != nil {
-		return nil, fmt.Errorf("unable to load paths from cache: %v", err)
-	}
-	return &searchIndex, nil
-}
-
-func BuildIndex(data *[]Page) *SearchIndex {
-	m := make(SearchIndex, len(*data))
-
-	for _, match := range *data {
-		key := IndexKey{Filename: match.Filename, Page: match.PageNum}
-		if _, ok := m[key]; !ok {
-			m[key] = match.Text
-		}
-	}
-	return &m
+	return matches, nil
 }

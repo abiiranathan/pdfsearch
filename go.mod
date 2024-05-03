@@ -6,7 +6,6 @@ require (
 	github.com/abiiranathan/goflag v0.1.6
 	github.com/bbalet/stopwords v1.0.0
 	github.com/jdkato/prose/v2 v2.0.0
-	golang.org/x/sync v0.7.0
 )
 
 require (
