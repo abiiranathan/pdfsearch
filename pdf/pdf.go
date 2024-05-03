@@ -4,7 +4,6 @@ package pdf
 #cgo CFLAGS: -I .
 
 #ifdef _WIN32
-// TODO: Add windows support
 error "Windows is not supported yet"
 #else
 #cgo pkg-config: glib-2.0 gio-2.0 cairo poppler-glib

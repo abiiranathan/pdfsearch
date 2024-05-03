@@ -23,8 +23,8 @@ main {
   padding: 2rem;
   padding-bottom: 100px;
   width: 100%;
-  display: flex;
-  gap: 1rem;
+  display: grid;
+  place-items: center;
 }
 
 .books {
@@ -34,22 +34,20 @@ main {
   box-shadow: 2px 2px rgba(0, 0, 0, 0.1);
   border-radius: 8px;
   align-self: flex-start;
-  justify-self: flex-end;
   background-color: #fff;
-  max-width: 30%;
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  max-width: 60rem;
+  width: 80%;
+  margin: auto;
 
   a {
     text-decoration: none;
     color: #333;
     font-weight: 400;
-    padding: 1rem;
+    padding: 1.25rem;
     border-bottom: 1px solid #ccc;
 
     &:hover {
-      background-color: #0e0578;
+      background-color: #1508a7;
       color: #fff;
     }
 
@@ -64,6 +62,24 @@ header {
   padding: 0.5rem;
   background-color: rgb(232, 254, 254);
   width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  a.browse {
+    text-decoration: none;
+    color: #353535;
+    font-weight: 400;
+    padding: 0.5rem;
+    background-color: #ffffff;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+
+    &:hover {
+      background-color: #056535;
+      color: #fff;
+    }
+  }
 }
 
 h1 {
@@ -107,6 +123,7 @@ form {
   width: 40rem;
   margin: auto;
 }
+
 .book_select {
   width: 40rem;
   margin: auto;

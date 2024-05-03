@@ -19,6 +19,9 @@ func SetupRoutes(mux *http.ServeMux, staticFs embed.FS,
 	// Open specific page.
 	mux.HandleFunc("GET /books/{book_id}/{page_num}", ServerPage(tmpl, pagesDir))
 
+	// Open books page
+	mux.HandleFunc("GET /books", ListBooks(tmpl, searchIndex))
+
 	// Open document with xdg-open if on localhost or serve it
 	mux.HandleFunc("GET /open-document/{book_id}", OpenDocument(pagesDir))
 

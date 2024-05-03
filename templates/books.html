@@ -9,7 +9,7 @@
     <title>PDF Search Engine</title>
     <link rel="shortcut icon" href="/static/favicon.png" type="image/png" />
     <link rel="stylesheet" href="/static/style.css" />
-    <script src="/static/script.js" defer></script>
+    <script src="/static/books.js" defer></script>
   </head>
 
   <body>
@@ -25,30 +25,22 @@
           <h1>PDF Search Engine</h1>
         </a>
       </div>
-      <a href="/books" class="browse">Browse Books</a>
+      <p>Books</p>
     </header>
 
     <main class="main">
-      <div>
-        <form method="get">
-          <input
-            type="text"
-            name="query"
-            class="query"
-            id="query"
-            placeholder="Type your query here..."
-          />
-          <select class="book_select" name="book" id="book_select">
-            <option value="">Search All Books</option>
-            {{ range .books }}
-            <option value="{{ .ID}}">{{ .Name }}</option>
-            {{ end }}
-          </select>
-        </form>
-        <div id="status"></div>
-        <div class="container">
-          <div id="results"></div>
-        </div>
+      <div class="books">
+        <h2 style="padding: 10px; text-align: center">Available Books</h2>
+        <input
+          type="search"
+          name="search_books"
+          id="search_books"
+          placeholder="Search books"
+          style="margin: 0.5rem 1rem"
+        />
+        {{ range .books }}
+        <a class="book_link" href="{{ .URL }}" target="_blank">{{ .Name }}</a>
+        {{ end }}
       </div>
     </main>
     <footer>&copy; 2024 &nbsp; Dr. Abiira Nathan</footer>

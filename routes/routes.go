@@ -63,6 +63,42 @@ func Home(tmpl *template.Template, searchIndex *search.SearchIndex) http.Handler
 	}
 }
 
+func ListBooks(tmpl *template.Template, searchIndex *search.SearchIndex) http.HandlerFunc {
+	availableBooks := map[uint32]Book{}
+	for key := range *searchIndex {
+		h := pdf.GetPathHash(key.Filename)
+		if _, ok := availableBooks[h]; !ok {
+			availableBooks[h] = Book{
+				ID:   h,
+				Name: filepath.Base(key.Filename),
+				URL:  fmt.Sprintf("/open-document/%d", h)}
+		}
+	}
+
+	books := make([]Book, 0, len(availableBooks))
+	for _, book := range availableBooks {
+		if !slices.ContainsFunc(books, func(b Book) bool {
+			return filepath.Base(book.Name) == filepath.Base(b.Name)
+		}) {
+			books = append(books, book)
+		}
+	}
+
+	slices.SortStableFunc(books, func(a, b Book) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := tmpl.ExecuteTemplate(w, "books.html", map[string]any{
+			"books": books,
+		})
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
 func Search(searchIndex *search.SearchIndex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
