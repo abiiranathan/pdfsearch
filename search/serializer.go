@@ -1,24 +1,25 @@
 package search
 
 import (
-	"bytes"
-	"encoding/gob"
+	"context"
 	"fmt"
 	"log"
-	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/abiiranathan/pdfsearch/database"
 	"github.com/abiiranathan/pdfsearch/pdf"
 )
 
+// Used to carry arguments to the collector.
+type fileJob struct {
+	index int
+	name  string
+}
+
 // Serialize reads all pdfs at directory, processes them in parallel and stores
 // the generated index in a binary outfile.
-func Serialize(directory string, outfile string, nworkers ...int) error {
-	workers := 2
-	if len(nworkers) > 0 {
-		workers = nworkers[0]
-	}
-
+func Serialize(directory string, once bool, workers int) error {
 	files, err := WalkDir(directory, []string{".pdf"})
 	if err != nil {
 		return fmt.Errorf("unable to load files at %s: %v", directory, err)
@@ -28,7 +29,7 @@ func Serialize(directory string, outfile string, nworkers ...int) error {
 	log.Printf("Found %d files in %s\n", numFiles, directory)
 	log.Println("Processing pdfs in", workers, "goroutines")
 
-	results := []Page{}
+	results := []database.Page{}
 
 	var wg sync.WaitGroup
 	wg.Add(workers)
@@ -58,50 +59,35 @@ func Serialize(directory string, outfile string, nworkers ...int) error {
 
 	wg.Wait()
 
-	// Build the index
-	log.Println("Building the search index....")
-	index := BuildIndex(&results)
-
-	log.Println("Encoding data with GOB encoding...")
-	buf := new(bytes.Buffer)
-	gobEncoder := gob.NewEncoder(buf)
-	err = gobEncoder.Encode(index)
-	if err != nil {
-		return err
+	// Create a slice of database.File to store the file information.
+	dbFiles := make([]database.File, numFiles)
+	for i, file := range files {
+		dbFiles[i] = database.File{
+			ID:   int(pdf.GetPathHash(file)),
+			Name: filepath.Base(file),
+			Path: file,
+		}
 	}
 
-	err = os.WriteFile(outfile, buf.Bytes(), os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("unable to write index to %s: %v", outfile, err)
-	}
-	log.Println("SearchIndex written to", outfile)
-
-	// write paths to cache
-	err = pdf.SerializeCaches(pathCacheFilename, files)
-	if err != nil {
-		return fmt.Errorf("unable to write paths to cache: %v", err)
-	}
-	return err
-}
-
-// Deserialize reads the generated index from a file
-// and returns a pointer to the SearchIndex.
-func Deserialize(index string) (*SearchIndex, error) {
-	b, err := os.ReadFile(index)
-	if err != nil {
-		return nil, err
+	log.Println("Storing file information into the database")
+	if once {
+		// Store the file information into the database.
+		err := database.InsertFiles(context.Background(), dbFiles)
+		if err != nil {
+			return fmt.Errorf("unable to store files: %v", err)
+		}
+	} else {
+		// Store the file information into the database one by one.
+		err := database.InsertOneByOne(context.Background(), dbFiles)
+		if err != nil {
+			return fmt.Errorf("unable to store files: %v", err)
+		}
 	}
 
-	searchIndex := make(SearchIndex)
-	err = gob.NewDecoder(bytes.NewReader(b)).Decode(&searchIndex)
-	if err != nil {
-		return nil, err
+	// Store the generated index of results into the database.
+	if once {
+		return database.InsertPages(context.Background(), results)
+	} else {
+		return database.InsertPagesOneByOne(context.Background(), results)
 	}
-
-	// Load paths from cache
-	err = pdf.DeserializeCaches(pathCacheFilename)
-	if err != nil {
-		return nil, fmt.Errorf("unable to load paths from cache: %v", err)
-	}
-	return &searchIndex, nil
 }

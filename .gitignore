@@ -11,3 +11,12 @@
 *.pdf
 pdfsearch
 pages
+
+# Ignore database files
+*.sqlite3
+*.sqlite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+pages

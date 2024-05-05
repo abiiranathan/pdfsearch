@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"embed"
-	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -12,11 +11,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+
+	_ "net/http/pprof"
 
 	"github.com/abiiranathan/pdfsearch/cli"
 	"github.com/abiiranathan/pdfsearch/routes"
-	"github.com/abiiranathan/pdfsearch/search"
 )
 
 func Run(config *cli.Config, pagesDir string, viewsFs embed.FS, staticFS embed.FS) {
@@ -34,12 +35,6 @@ func Run(config *cli.Config, pagesDir string, viewsFs embed.FS, staticFS embed.F
 		panic(fmt.Errorf("unable to parse templates: %v", err))
 	}
 
-	// build the index
-	searchIndex, err := search.Deserialize(config.Index)
-	if err != nil {
-		panic(fmt.Errorf("unable to deserialize index: %s", config.Index))
-	}
-
 	// Create a new serveMux
 	mux := http.NewServeMux()
 
@@ -53,22 +48,44 @@ func Run(config *cli.Config, pagesDir string, viewsFs embed.FS, staticFS embed.F
 	}
 
 	// Connect the routes.
-	routes.SetupRoutes(mux, staticFS, pagesDir, tmpl, searchIndex)
+	routes.SetupRoutes(mux, staticFS, pagesDir, tmpl)
 
 	// Clean up temporary files every 2 minutes.
 	go cleanUpTemporaryFiles(pagesDir)
 
-	defer GracefulShutdown(server)
+	go func() {
+		defer GracefulShutdown(server)
+	}()
 
 	log.Printf("Listening on http://0.0.0.0:%d\n", config.Port)
-
-	// Start the server
-	err = server.ListenAndServe()
-	if err != nil {
-		if !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Server terminated with error: %v\n", err)
-		}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("unable to start server: %v\n", err)
 	}
+}
+
+// Gracefully shuts down the server. The default timeout is 10 seconds
+// To wait for pending connections.
+func GracefulShutdown(server *http.Server, timeout ...time.Duration) {
+	var t time.Duration
+	if len(timeout) > 0 {
+		t = timeout[0]
+	} else {
+		t = time.Second * 10
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), t)
+	defer cancel()
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+	<-quit
+	cancel()
+
+	log.Println("Shutting down server")
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("unable to shutdown server: %v\n", err)
+	}
+
+	log.Println("Server shutdown")
 }
 
 func cleanUpTemporaryFiles(dir string) {
@@ -98,29 +115,4 @@ func cleanUpTemporaryFiles(dir string) {
 		}
 	}
 
-}
-
-// Gracefully shuts down the server. The default timeout is 10 seconds
-// To wait for pending connections.
-func GracefulShutdown(server *http.Server, timeout ...time.Duration) {
-	var t time.Duration
-	if len(timeout) > 0 {
-		t = timeout[0]
-	} else {
-		t = 10 * time.Second
-	}
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt)
-	log.Println("waiting on os.Interrupt")
-
-	<-quit
-	ctx, cancel := context.WithTimeout(context.Background(), t)
-	defer cancel()
-
-	log.Println("Shutting down the server")
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalln(err)
-	}
-	log.Println("shutting down gracefully")
 }

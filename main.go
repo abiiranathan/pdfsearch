@@ -6,12 +6,18 @@ import (
 	"os"
 
 	"github.com/abiiranathan/pdfsearch/cli"
+	"github.com/abiiranathan/pdfsearch/database"
 	"github.com/abiiranathan/pdfsearch/pdf"
 	"github.com/abiiranathan/pdfsearch/server"
 )
 
-// Temporary storage for generated images
-const pagesDir = "pages"
+const (
+	// Temporary storage for generated images
+	pagesDir = "pages"
+
+	// Path to the database
+	dbPath = "pdfsearch.db"
+)
 
 //go:embed all:templates
 var viewsFs embed.FS
@@ -23,7 +29,6 @@ var staticFs embed.FS
 var config = &cli.DefaultConfig
 
 func startServer() {
-	cli.ValidateIndex(config.Index)
 	server.Run(config, pagesDir, viewsFs, staticFs)
 }
 
@@ -45,6 +50,12 @@ func main() {
 	if subcmd == nil {
 		ctx.PrintUsage(os.Stdout)
 		os.Exit(1)
+	}
+
+	// Connect to the database or fail if we cannot connect.
+	database.Connect(dbPath)
+	if err := database.CreateTables(); err != nil {
+		log.Fatalf("unable to create tables: %v\n", err)
 	}
 
 	// Run the subcommand

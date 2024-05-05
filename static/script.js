@@ -3,7 +3,6 @@ const queryInput = document.getElementById("query");
 const book_select = document.getElementById("book_select");
 const resultsDiv = document.getElementById("results");
 const statusDiv = document.getElementById("status");
-const highlightEnabled = document.documentElement.dataset.highlight === "true";
 const search_books = document.getElementById("search_books");
 
 form.onsubmit = (event) => {
@@ -75,24 +74,16 @@ function displayResults(data, start, end) {
     resultsDiv.appendChild(result);
 
     const anchor = document.createElement("a");
-    anchor.href = `/books/${match.ID}/${match.PageNum}`;
-    anchor.innerText = match.Text;
+    anchor.href = `/books/${match.FileID}/${match.PageNum}`;
+    anchor.innerHTML = match.Title;
     anchor.target = "_blank";
     anchor.rel = "noopener noreferer";
     result.appendChild(anchor);
 
-    // Add context
+    // Add match text
     const ctx = document.createElement("p");
     ctx.className = "snippet";
-    if (highlightEnabled) {
-      ctx.innerHTML = highlightText(
-        match.Context,
-        queryInput.value,
-        "highlight"
-      );
-    } else {
-      ctx.innerText = match.Context;
-    }
+    ctx.innerHTML = match.Text;
 
     result.appendChild(ctx);
 
@@ -121,14 +112,4 @@ if (lastQuery) {
   book_select.value = lastBook;
 
   handleSearch(`/search?query=${lastQuery}&book=${lastBook}`);
-}
-
-function highlightText(text, searchTerm, className) {
-  const regex = new RegExp(searchTerm, "gi");
-  const highlightedText = text.replace(
-    regex,
-    (match) => `<span class="${className}">${match}</span>`
-  );
-
-  return highlightedText;
 }

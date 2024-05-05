@@ -2,27 +2,22 @@ package cli
 
 // Config holds the configuration for the CLI.
 type Config struct {
-	// Max files or folders processes at a time.
-	// Large values will increase CPU and memory usage.
-	// Default is 10.
-	MaxConcurrency int
-
-	// the name of the file to store the folder index.
-	Index string
-
 	// the directory to index
 	Directory string
 
-	// the file to search directory
-	Filename string
+	// Bulk file upload(faster but errors on duplicates).
+	// Otherwise, use the slow, one-by-one way(ignores duplicates)
+	Once bool
 
-	// Search pattern / regex
-	Pattern string
+	// Number of workers to use when processing pdfs. Default is 2.
+	NumWorkers int
 
 	// server port. default is 8080
 	Port int
 }
 
 var DefaultConfig = Config{
-	Port: 8080,
+	Port:       8080,
+	Once:       true,
+	NumWorkers: 2,
 }

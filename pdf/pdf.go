@@ -15,13 +15,11 @@ error "Windows is not supported yet"
 */
 import "C"
 import (
-	"encoding/gob"
 	"fmt"
 	"hash/fnv"
-	"os"
 	"runtime"
 	"strings"
-	"sync"
+	"unicode"
 	"unsafe"
 )
 
@@ -144,6 +142,11 @@ func (pdf *Document) GetPage(page int) *Page {
 		PageNum: page,
 	}
 
+	// unable to get the page
+	if p_page.page == nil {
+		return nil
+	}
+
 	var width, height C.double
 	C.poppler_page_get_size(p_page.page, &width, &height)
 	p_page.Width = float64(width)
@@ -206,12 +209,48 @@ func (page *Page) Text() string {
 		return ""
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in f", r)
+		}
+	}()
+
 	g_text := C.poppler_page_get_text(page.page)
 	if g_text == nil {
 		return ""
 	}
 	defer C.g_free(C.gpointer(g_text))
-	return C.GoString(g_text)
+	return cleanText(C.GoString(g_text))
+}
+
+func cleanText(text string) string {
+	var cleaned strings.Builder
+
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		if isOnlyDotsOrNumbers(line) {
+			continue
+		}
+
+		for _, char := range line {
+			if unicode.IsLetter(char) || unicode.IsNumber(char) || unicode.IsSpace(char) {
+				cleaned.WriteRune(char)
+			}
+		}
+		cleaned.WriteString("\n")
+	}
+	return cleaned.String()
+}
+
+func isOnlyDotsOrNumbers(line string) bool {
+	line = strings.TrimSpace(line)
+	// return true if line contains only dots or numbers
+	for _, char := range line {
+		if char != '.' && !unicode.IsNumber(char) {
+			return false
+		}
+	}
+	return true
 }
 
 // Read the text content of a PDF file in a single cgo call in parallel.
@@ -286,83 +325,16 @@ func GetLineContext(lineno int, lines *[]string) string {
 	return text
 }
 
-var mu sync.Mutex
-var hashesCache = make(map[uint32]string)
-
 // Generate a unique hash for path.
 func GetPathHash(path string) uint32 {
 	// Create an FNV-1 hash
 	h := fnv.New32()
 	h.Write([]byte(path))
 	hashInt := h.Sum32()
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	hashesCache[hashInt] = path
 	return hashInt
-}
-
-func GetPathFromHash(hash uint32) (string, bool) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	value, ok := hashesCache[hash]
-	return value, ok
 }
 
 type PathCache struct {
 	Hashes map[uint32]string // Hashes to file paths
 	Paths  map[string]uint32 // File paths to hashes
-}
-
-// SerializeCaches writes the caches to the given file.
-// Uses gob encoding.
-func SerializeCaches(out string, files []string) error {
-	// Clear the caches
-	hashesCache = make(map[uint32]string)
-
-	// Populate the caches
-	for _, file := range files {
-		GetPathHash(file)
-	}
-
-	cache := PathCache{
-		Hashes: hashesCache,
-	}
-
-	w, err := os.Create(out)
-	if err != nil {
-		return err
-	}
-	defer w.Close()
-
-	enc := gob.NewEncoder(w)
-	err = enc.Encode(cache)
-	if err != nil {
-		return fmt.Errorf("error encoding cache: %v", err)
-	}
-	return nil
-}
-
-// DeserializeCaches reads the cache from the given file and populates the caches.
-// Uses gob decoding.
-func DeserializeCaches(in string) error {
-	r, err := os.Open(in)
-	if err != nil {
-		return err
-	}
-
-	dec := gob.NewDecoder(r)
-	var cache PathCache
-
-	err = dec.Decode(&cache)
-	if err != nil {
-		return fmt.Errorf("error decoding cache: %v", err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	hashesCache = cache.Hashes
-	return nil
 }
